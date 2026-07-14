@@ -6,13 +6,14 @@ from typing import List, Optional, Union
 
 from ._compat import Literal, dataclass
 from .llm_configs import args_to_request_config
+from .request_minimax import minimax_chat_completion, minimax_chat_completion_batch
 from .request_sglang import (
     configure_logging,
     sglang_chat_completion,
     sglang_chat_completion_batch,
 )
 
-PIPELINE_TYPES = Literal["sglang", "transformers", "mock"]
+PIPELINE_TYPES = Literal["sglang", "transformers", "minimax", "mock"]
 LOG_LEVELS = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 
 
@@ -281,6 +282,45 @@ class SGLangPipeline(LLMPipeline):
             response = sglang_chat_completion(cfg=self.cfg, messages=messages)
             debug_msg = "\n" + ("=" * 60) + "\n"
             debug_msg += f"SGLANG Query response: {response}\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        logging.debug(debug_msg)
+        return response
+
+
+class MinimaxPipeline(LLMPipeline):
+
+    def __init__(self, cfg: PipelineConfig):
+
+        super().__init__(cfg)
+
+        self.cfg = cfg
+        configure_logging(self.cfg.log_level)
+
+    def generate(self, inputs) -> Union[str, List[str]]:
+
+        messages, parallel = super().parse_inputs(inputs)
+
+        if parallel:
+            response = minimax_chat_completion_batch(
+                cfg=self.cfg,
+                requests_messages=messages,
+            )
+
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += "MiniMax Query responses:\n"
+            for r in response:
+                debug_msg += f"{r}\n"
+                debug_msg += ("-" * 40) + "\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        else:
+            logging.debug("MiniMax Query messages: %s", messages)
+            response = minimax_chat_completion(cfg=self.cfg, messages=messages)
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += f"MiniMax Query response: {response}\n"
             debug_msg += ("=" * 60) + "\n"
             logging.debug(debug_msg)
 
@@ -586,6 +626,8 @@ def pipeline_from_config(cfg: PipelineConfig):
         llm_pipeline = SGLangPipeline(cfg)
     elif cfg.pipeline_type == "transformers":
         llm_pipeline = TransformersPipeline(cfg)
+    elif cfg.pipeline_type == "minimax":
+        llm_pipeline = MinimaxPipeline(cfg)
     elif cfg.pipeline_type == "mock":
         llm_pipeline = MockPipeline(cfg)
     else:
@@ -622,6 +664,7 @@ def pipeline_config_from_args(args):
 __all__ = [
     "LLMPipeline",
     "LOG_LEVELS",
+    "MinimaxPipeline",
     "MockPipeline",
     "PIPELINE_TYPES",
     "PipelineConfig",
