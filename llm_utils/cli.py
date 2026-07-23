@@ -1,22 +1,33 @@
 #!/usr/bin/env python3
-"""CLI entrypoint for sending a prompt-file request through SGLangPipeline."""
+"""CLI entrypoint for sending a prompt-file request through a configured pipeline."""
 
 import argparse
 import json
 from pathlib import Path
+import sys
 
-from .pipelines import PipelineConfig, SGLangPipeline
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from llm_utils.pipelines import PipelineConfig, pipeline_from_config
+else:
+    from .pipelines import PipelineConfig, pipeline_from_config
 
 
 def build_parser():
-    """Create the command-line parser for the SGLang pipeline CLI."""
+    """Create the command-line parser for the pipeline CLI."""
     parser = argparse.ArgumentParser(
-        description="Send a system/user prompt file through an SGLang pipeline.",
+        description="Send a system/user prompt file through an SGLang or MiniMax pipeline.",
+    )
+    parser.add_argument(
+        "--pipeline-type",
+        default="sglang",
+        choices=["sglang", "minimax"],
+        help="Pipeline backend to use (default: sglang).",
     )
     parser.add_argument(
         "--model",
         required=True,
-        help="Model name reported to the SGLang server.",
+        help="Model name reported to the selected backend.",
     )
     parser.add_argument(
         "--prompt-file",
@@ -27,13 +38,13 @@ def build_parser():
     parser.add_argument(
         "--host",
         default="127.0.0.1",
-        help="SGLang server host (default: 127.0.0.1).",
+        help="SGLang server host (default: 127.0.0.1). Ignored for MiniMax.",
     )
     parser.add_argument(
         "--port",
         type=int,
         default=30000,
-        help="SGLang server port (default: 30000).",
+        help="SGLang server port (default: 30000). Ignored for MiniMax.",
     )
     parser.add_argument(
         "--temperature",
@@ -118,7 +129,7 @@ def parse_prompt_file(prompt_file):
 
 def validate_args(args):
     """Validate CLI arguments before building the pipeline."""
-    if args.port <= 0 or args.port > 65535:
+    if args.pipeline_type == "sglang" and (args.port <= 0 or args.port > 65535):
         raise ValueError("--port must be between 1 and 65535.")
     if args.max_new_tokens <= 0:
         raise ValueError("--max-new-tokens must be > 0.")
@@ -129,7 +140,7 @@ def validate_args(args):
 
 
 def main():
-    """Parse args, load prompts, run SGLangPipeline, and print the response."""
+    """Parse args, load prompts, run the selected pipeline, and print the response."""
     parser = build_parser()
     args = parser.parse_args()
     validate_args(args)
@@ -138,7 +149,7 @@ def main():
 
     cfg = PipelineConfig(
         model=args.model,
-        pipeline_type="sglang",
+        pipeline_type=args.pipeline_type,
         log_level=args.log_level,
         init_prompts=args.prompt_file,
         temperature=args.temperature,
@@ -150,7 +161,7 @@ def main():
         timeout=args.timeout,
     )
 
-    pipeline = SGLangPipeline(cfg)
+    pipeline = pipeline_from_config(cfg)
     response = pipeline.generate(messages)
 
     if isinstance(response, dict):
