@@ -11,8 +11,13 @@ from .request_sglang import (
     sglang_chat_completion,
     sglang_chat_completion_batch,
 )
+from .request_vllm import (
+    init_vllm,
+    vllm_chat_completion,
+    vllm_chat_completion_batch,
+)
 
-PIPELINE_TYPES = Literal["sglang", "transformers", "mock"]
+PIPELINE_TYPES = Literal["sglang", "transformers", "vllm", "mock"]
 LOG_LEVELS = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 
 
@@ -283,6 +288,50 @@ class SGLangPipeline(LLMPipeline):
             debug_msg += f"SGLANG Query response: {response}\n"
             debug_msg += ("=" * 60) + "\n"
             logging.debug(debug_msg)
+
+        logging.debug(debug_msg)
+        return response
+
+
+class VLLMPipeline(LLMPipeline):
+
+    def __init__(self, cfg: PipelineConfig):
+
+        super().__init__(cfg)
+
+        self.cfg = cfg
+        configure_logging(self.cfg.log_level)
+        self.llm, self.tokenizer = init_vllm(cfg)
+
+    def generate(self, inputs) -> Union[dict, List[dict]]:
+
+        messages, parallel = super().parse_inputs(inputs)
+
+        if parallel:
+            response = vllm_chat_completion_batch(
+                cfg=self.cfg,
+                requests_messages=messages,
+                llm=self.llm,
+                tokenizer=self.tokenizer,
+            )
+
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += "vLLM query responses:\n"
+            for r in response:
+                debug_msg += f"{r}\n"
+                debug_msg += ("-" * 40) + "\n"
+            debug_msg += ("=" * 60) + "\n"
+        else:
+            logging.debug("vLLM query messages: %s", messages)
+            response = vllm_chat_completion(
+                cfg=self.cfg,
+                messages=messages,
+                llm=self.llm,
+                tokenizer=self.tokenizer,
+            )
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += f"vLLM query response: {response}\n"
+            debug_msg += ("=" * 60) + "\n"
 
         logging.debug(debug_msg)
         return response
@@ -586,6 +635,8 @@ def pipeline_from_config(cfg: PipelineConfig):
         llm_pipeline = SGLangPipeline(cfg)
     elif cfg.pipeline_type == "transformers":
         llm_pipeline = TransformersPipeline(cfg)
+    elif cfg.pipeline_type == "vllm":
+        llm_pipeline = VLLMPipeline(cfg)
     elif cfg.pipeline_type == "mock":
         llm_pipeline = MockPipeline(cfg)
     else:
@@ -627,6 +678,7 @@ __all__ = [
     "PipelineConfig",
     "SGLangPipeline",
     "TransformersPipeline",
+    "VLLMPipeline",
     "args_to_request_config",
     "pipeline_config_from_args",
     "pipeline_from_config",
