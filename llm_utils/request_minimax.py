@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Dict, List
 
-from openai import OpenAI
+import anthropic
 
 try:
     from .llm_configs import RequestConfig
@@ -79,28 +79,28 @@ def minimax_chat_completion(
     """Send one chat completion request to MiniMax and return the assistant message."""
 
     credentials = _get_minimax_credentials()
-    client = OpenAI(
+    client = anthropic.Anthropic(
         api_key=credentials["api_key"],
         base_url=credentials["base_url"],
         timeout=cfg.timeout,
     )
 
-    response = client.chat.completions.create(
+    response = client.messages.create(
         model=cfg.model,
         messages=messages,
         temperature=cfg.temperature,
         max_tokens=cfg.max_new_tokens,
     )
 
-    try:
-        content = response.choices[0].message.content
-    except (AttributeError, IndexError) as exc:
-        raise ValueError(f"Unexpected API response shape: {response}") from exc
-
-    if not isinstance(content, str) or not content.strip():
-        raise ValueError(f"Unexpected assistant content in API response: {response}")
-
-    return {"role": "assistant", "content": content.strip()}
+    thinking, text = "", ""
+    for block in response.content:
+        if block.type == "thinking":
+            thinking += f"{block.thinking}\n"
+        elif block.type == "text":
+            text += f"{block.text}\n"
+    return {"role": "assistant", 
+            "thinking": thinking.strip(),
+            "content": text.strip()}
 
 
 def minimax_chat_completion_batch(
@@ -113,3 +113,38 @@ def minimax_chat_completion_batch(
     for messages in requests_messages:
         outputs.append(minimax_chat_completion(cfg, messages))
     return outputs
+
+
+if __name__ == "__main__":
+
+    creds = _get_minimax_credentials()
+    print(creds)
+
+    client = anthropic.Anthropic(
+        api_key=creds["api_key"],
+        base_url=creds["base_url"]
+    )
+    msg = [
+        {
+            "role": "system",
+            "content": "You are an evil wizard."
+        },
+        {
+            "role": "user",
+            "content": "Hi, how are you?"
+        }
+    ]
+    cfg = RequestConfig(
+        model="Minimax-M2.7",
+        host="",
+        port="",
+        temperature=0.7,
+        max_new_tokens=1024,
+        timeout=1000,
+        log_level="DEBUG"
+    )
+
+    
+    rsp = minimax_chat_completion_batch(cfg=cfg, 
+                                        requests_messages=[msg, msg])
+    print(rsp)
