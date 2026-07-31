@@ -145,5 +145,6 @@ if __name__ == "__main__":
     )
 
     
-    rsp = minimax_chat_completion(cfg=cfg, messages=msg)
+    rsp = minimax_chat_completion_batch(cfg=cfg, 
+                                        requests_messages=[msg, msg])
     print(rsp)
