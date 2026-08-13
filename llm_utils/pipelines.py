@@ -6,6 +6,11 @@ from typing import List, Optional, Union
 
 from ._compat import Literal, dataclass
 from .llm_configs import args_to_request_config
+from .request_anthropic_api import (
+    anthropic_messages_completion,
+    anthropic_messages_completion_batch,
+    configure_logging as configure_anthropic_logging,
+)
 from .request_minimax import minimax_chat_completion, minimax_chat_completion_batch
 from .request_sglang import (
     configure_logging,
@@ -18,7 +23,14 @@ from .request_vllm import (
     vllm_chat_completion_batch,
 )
 
-PIPELINE_TYPES = Literal["sglang", "transformers", "vllm", "minimax", "mock"]
+PIPELINE_TYPES = Literal[
+    "sglang",
+    "transformers",
+    "vllm",
+    "minimax",
+    "anthropic",
+    "mock",
+]
 LOG_LEVELS = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 
 
@@ -43,6 +55,8 @@ class PipelineConfig:
     host: Optional[str] = "127.0.0.1"
     port: Optional[int] = 30000
     timeout: Optional[int] = 180  # seconds
+    base_url: Optional[str] = None
+    token: Optional[str] = None
 
     # Transformers pipeline arguments
     device: Optional[Literal["auto", "cpu", "cuda", "mps"]] = "auto"
@@ -376,7 +390,46 @@ class MinimaxPipeline(LLMPipeline):
         logging.debug(debug_msg)
         return response
 
-    
+
+class AnthropicAPIPipeline(LLMPipeline):
+
+    def __init__(self, cfg: PipelineConfig):
+
+        super().__init__(cfg)
+
+        self.cfg = cfg
+        configure_anthropic_logging(self.cfg.log_level)
+
+    def generate(self, inputs) -> Union[str, List[str]]:
+
+        messages, parallel = super().parse_inputs(inputs)
+
+        if parallel:
+            response = anthropic_messages_completion_batch(
+                cfg=self.cfg,
+                requests_messages=messages,
+            )
+
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += "Anthropic Query responses:\n"
+            for r in response:
+                debug_msg += f"{r}\n"
+                debug_msg += ("-" * 40) + "\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        else:
+            logging.debug("Anthropic Query messages: %s", messages)
+            response = anthropic_messages_completion(cfg=self.cfg, messages=messages)
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += f"Anthropic Query response: {response}\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        logging.debug(debug_msg)
+        return response
+
+
 class MockPipeline(LLMPipeline):
     """Mock pipeline for testing without a GPU.
 
@@ -679,6 +732,8 @@ def pipeline_from_config(cfg: PipelineConfig):
         llm_pipeline = VLLMPipeline(cfg)
     elif cfg.pipeline_type == "minimax":
         llm_pipeline = MinimaxPipeline(cfg)
+    elif cfg.pipeline_type == "anthropic":
+        llm_pipeline = AnthropicAPIPipeline(cfg)
     elif cfg.pipeline_type == "mock":
         llm_pipeline = MockPipeline(cfg)
     else:
@@ -705,6 +760,8 @@ def pipeline_config_from_args(args):
         host=args.host,
         port=args.port,
         timeout=args.timeout,
+        base_url=getattr(args, "base_url", None),
+        token=getattr(args, "token", None),
         device=args.device,
         dtype=args.dtype,
     )
@@ -714,6 +771,7 @@ def pipeline_config_from_args(args):
 
 __all__ = [
     "LLMPipeline",
+    "AnthropicAPIPipeline",
     "LOG_LEVELS",
     "MinimaxPipeline",
     "MockPipeline",

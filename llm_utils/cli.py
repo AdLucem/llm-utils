@@ -16,12 +16,12 @@ else:
 def build_parser():
     """Create the command-line parser for the pipeline CLI."""
     parser = argparse.ArgumentParser(
-        description="Send a system/user prompt file through an SGLang or MiniMax pipeline.",
+        description="Send a system/user prompt file through an SGLang, MiniMax, or Anthropic-compatible pipeline.",
     )
     parser.add_argument(
         "--pipeline-type",
         default="sglang",
-        choices=["sglang", "minimax"],
+        choices=["sglang", "minimax", "anthropic"],
         help="Pipeline backend to use (default: sglang).",
     )
     parser.add_argument(
@@ -75,6 +75,14 @@ def build_parser():
         type=int,
         default=180,
         help="Request timeout in seconds (default: 180).",
+    )
+    parser.add_argument(
+        "--base-url",
+        help="Anthropic-compatible Messages API base URL, for example https://api.anthropic.com/v1.",
+    )
+    parser.add_argument(
+        "--token",
+        help="Authentication token or API key for Anthropic-compatible endpoints.",
     )
     parser.add_argument(
         "--log-level",
@@ -131,6 +139,11 @@ def validate_args(args):
     """Validate CLI arguments before building the pipeline."""
     if args.pipeline_type == "sglang" and (args.port <= 0 or args.port > 65535):
         raise ValueError("--port must be between 1 and 65535.")
+    if args.pipeline_type == "anthropic":
+        if not args.base_url:
+            raise ValueError("--base-url is required for the anthropic pipeline.")
+        if not args.token:
+            raise ValueError("--token is required for the anthropic pipeline.")
     if args.max_new_tokens <= 0:
         raise ValueError("--max-new-tokens must be > 0.")
     if args.timeout <= 0:
@@ -159,6 +172,8 @@ def main():
         host=args.host,
         port=args.port,
         timeout=args.timeout,
+        base_url=args.base_url,
+        token=args.token,
     )
 
     pipeline = pipeline_from_config(cfg)

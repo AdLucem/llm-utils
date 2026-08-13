@@ -4,8 +4,6 @@ import os
 from pathlib import Path
 from typing import Dict, List
 
-from openai import OpenAI
-
 try:
     from .llm_configs import RequestConfig
 except ImportError:  # pragma: no cover - direct script fallback
@@ -77,6 +75,13 @@ def minimax_chat_completion(
     messages: List[Dict[str, str]],
 ) -> Dict[str, str]:
     """Send one chat completion request to MiniMax and return the assistant message."""
+
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise ImportError(
+            "openai is required to use MiniMax helpers. Install `llm-utils[minimax]`."
+        ) from exc
 
     credentials = _get_minimax_credentials()
     client = OpenAI(
