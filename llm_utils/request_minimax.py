@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 from typing import Dict, List
+import anthropic 
 
 try:
     from .llm_configs import RequestConfig
