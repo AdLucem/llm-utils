@@ -94,7 +94,6 @@ def minimax_chat_completion(
     response = client.messages.create(
         model=cfg.model,
         messages=messages,
-        temperature=cfg.temperature,
         max_tokens=cfg.max_new_tokens,
     )
 
