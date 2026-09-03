@@ -154,6 +154,15 @@ llm-utils \
   --port 30000
 ```
 
+To run a local vLLM model through the same CLI:
+
+```bash
+llm-utils \
+  --pipeline-type vllm \
+  --model meta-llama/Llama-3.2-1B \
+  --prompt-file sample-prompt.txt
+```
+
 ## Example: Use The Package In Python
 
 ```python

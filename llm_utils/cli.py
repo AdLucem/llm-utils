@@ -16,12 +16,12 @@ else:
 def build_parser():
     """Create the command-line parser for the pipeline CLI."""
     parser = argparse.ArgumentParser(
-        description="Send a system/user prompt file through an SGLang, MiniMax, or Anthropic-compatible pipeline.",
+        description="Send a system/user prompt file through an SGLang, vLLM, MiniMax, or Anthropic-compatible pipeline.",
     )
     parser.add_argument(
         "--pipeline-type",
         default="sglang",
-        choices=["sglang", "minimax", "anthropic"],
+        choices=["sglang", "vllm", "minimax", "anthropic"],
         help="Pipeline backend to use (default: sglang).",
     )
     parser.add_argument(
@@ -38,13 +38,13 @@ def build_parser():
     parser.add_argument(
         "--host",
         default="127.0.0.1",
-        help="SGLang server host (default: 127.0.0.1). Ignored for MiniMax.",
+        help="SGLang server host (default: 127.0.0.1). Ignored for vLLM and MiniMax.",
     )
     parser.add_argument(
         "--port",
         type=int,
         default=30000,
-        help="SGLang server port (default: 30000). Ignored for MiniMax.",
+        help="SGLang server port (default: 30000). Ignored for vLLM and MiniMax.",
     )
     parser.add_argument(
         "--temperature",
