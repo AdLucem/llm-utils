@@ -53,8 +53,8 @@ def _get_minimax_credentials() -> Dict[str, str]:
 
     dotenv_values = _read_dotenv()
 
-    api_key = os.environ.get("MINIMAX_API_KEY") or dotenv_values.get("MINIMAX_API_KEY")
-    base_url = os.environ.get("MINIMAX_BASE_URL") or dotenv_values.get("MINIMAX_BASE_URL")
+    api_key = _clean_env_value(os.environ.get("MINIMAX_API_KEY") or dotenv_values.get("MINIMAX_API_KEY"))
+    base_url = _clean_env_value(os.environ.get("MINIMAX_BASE_URL") or dotenv_values.get("MINIMAX_BASE_URL"))
 
     missing = []
     if not api_key:
@@ -68,7 +68,21 @@ def _get_minimax_credentials() -> Dict[str, str]:
             + ", ".join(missing)
         )
 
+    if not base_url.startswith(("http://", "https://")):
+        raise ValueError("MINIMAX_BASE_URL must start with http:// or https://.")
+
     return {"api_key": api_key, "base_url": base_url}
+
+
+def _clean_env_value(value: str | None) -> str | None:
+    """Strip whitespace and optional quote characters from environment values."""
+    if value is None:
+        return None
+
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    return value
 
 
 def minimax_chat_completion(
