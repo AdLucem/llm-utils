@@ -1,6 +1,6 @@
 # Tests
 
-This directory contains focused tests for the two production pipeline
+This directory contains focused tests for the production pipeline
 implementations in `llm_utils.pipelines`.
 
 ## Files
@@ -24,6 +24,14 @@ implementations in `llm_utils.pipelines`.
   - batched requests return one assistant response per prompt
   - the response format matches the contract used elsewhere in this repo
 
+- `test/test_anthropic_pipeline.py`
+  Integration tests for `AnthropicAPIPipeline`. These tests use a live
+  Anthropic Messages API-compatible endpoint, read `ANTHROPIC_BASE_URL` and
+  `ANTHROPIC_API_KEY` from the repository root `.env` file, and use the shared
+  `sample-prompt.txt` file from the repository root so we can verify:
+  - the sample prompt file is parsed into the expected chat message shape
+  - a live request returns the standard assistant response dictionary
+
 ## Running The Tests
 
 Run the whole suite:
@@ -43,6 +51,16 @@ Run only the live SGLang integration tests:
 ```bash
 python3 -m pytest test/test_sglang_pipeline.py
 ```
+
+Run only the Anthropic pipeline tests:
+
+```bash
+python3 -m pytest test/test_anthropic_pipeline.py
+```
+
+Before running the Anthropic test, make sure the repository root `.env` file
+contains `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`. You can also set
+`ANTHROPIC_MODEL_ID` to override the default model name used by the test.
 
 ## Reading Notes
 
