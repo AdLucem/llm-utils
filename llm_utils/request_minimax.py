@@ -122,6 +122,52 @@ def minimax_chat_completion(
             "content": text.strip()}
 
 
+def minimax_chat_completion_stream(
+    cfg: RequestConfig,
+    messages: List[Dict[str, str]],
+):
+    """Stream one MiniMax chat completion.
+
+    Yields `{"type": "delta"|"thinking_delta", "text": str}` as tokens arrive and
+    finishes with `{"type": "done", "message": {...}}`, whose message has the same
+    shape `minimax_chat_completion` returns.
+    """
+
+    credentials = _get_minimax_credentials()
+    client = anthropic.Anthropic(
+        api_key=credentials["api_key"],
+        base_url=credentials["base_url"],
+        timeout=cfg.timeout,
+    )
+
+    thinking, text = "", ""
+    with client.messages.stream(
+        model=cfg.model,
+        messages=messages,
+        max_tokens=cfg.max_new_tokens,
+    ) as stream:
+        for event in stream:
+            if getattr(event, "type", None) != "content_block_delta":
+                continue
+            delta = getattr(event, "delta", None)
+            delta_type = getattr(delta, "type", None)
+            if delta_type == "text_delta":
+                text += delta.text
+                yield {"type": "delta", "text": delta.text}
+            elif delta_type == "thinking_delta":
+                thinking += delta.thinking
+                yield {"type": "thinking_delta", "text": delta.thinking}
+
+    yield {
+        "type": "done",
+        "message": {
+            "role": "assistant",
+            "thinking": thinking.strip(),
+            "content": text.strip(),
+        },
+    }
+
+
 def minimax_chat_completion_batch(
     cfg: RequestConfig,
     requests_messages: List[List[Dict[str, str]]],

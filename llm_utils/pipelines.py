@@ -9,9 +9,14 @@ from .llm_configs import args_to_request_config
 from .request_anthropic_api import (
     anthropic_messages_completion,
     anthropic_messages_completion_batch,
+    anthropic_messages_completion_stream,
     configure_logging as configure_anthropic_logging,
 )
-from .request_minimax import minimax_chat_completion, minimax_chat_completion_batch
+from .request_minimax import (
+    minimax_chat_completion,
+    minimax_chat_completion_batch,
+    minimax_chat_completion_stream,
+)
 from .request_sglang import (
     configure_logging,
     sglang_chat_completion,
@@ -110,6 +115,20 @@ class LLMPipeline:
             "It seems that you have accidentally used the base AgentPipeline class, "
             "which does not have a `generate` implementation."
         )
+
+    def generate_stream(self, inputs):
+        """Yield generation events for one turn.
+
+        Events are `{"type": "delta"|"thinking_delta", "text": str}` while output
+        arrives, then exactly one `{"type": "done", "message": {...}}` whose
+        message is what `generate` would have returned.
+
+        This default implementation does not stream: it runs `generate` and
+        yields only the final event, so every pipeline satisfies the interface
+        and callers never need to check whether streaming is supported.
+        """
+
+        yield {"type": "done", "message": self.generate(inputs)}
 
 
 class TransformersPipeline(LLMPipeline):
@@ -390,6 +409,16 @@ class MinimaxPipeline(LLMPipeline):
         logging.debug(debug_msg)
         return response
 
+    def generate_stream(self, inputs):
+        messages, parallel = super().parse_inputs(inputs)
+        if parallel:
+            # Batched requests have no meaningful token stream; fall back.
+            yield {"type": "done", "message": self.generate(inputs)}
+            return
+
+        logging.debug("MiniMax streaming query messages: %s", messages)
+        yield from minimax_chat_completion_stream(cfg=self.cfg, messages=messages)
+
 
 class AnthropicAPIPipeline(LLMPipeline):
 
@@ -428,6 +457,16 @@ class AnthropicAPIPipeline(LLMPipeline):
 
         logging.debug(debug_msg)
         return response
+
+    def generate_stream(self, inputs):
+        messages, parallel = super().parse_inputs(inputs)
+        if parallel:
+            # Batched requests have no meaningful token stream; fall back.
+            yield {"type": "done", "message": self.generate(inputs)}
+            return
+
+        logging.debug("Anthropic streaming query messages: %s", messages)
+        yield from anthropic_messages_completion_stream(cfg=self.cfg, messages=messages)
 
 
 class MockPipeline(LLMPipeline):
@@ -660,6 +699,28 @@ class MockPipeline(LLMPipeline):
                 break
 
         return self._detokenize(output_tokens).strip()
+
+    def generate_stream(self, inputs):
+        """Emit the mock reply in small chunks, so offline UI work sees streaming."""
+
+        import time
+
+        message = self.generate(inputs)
+        if not isinstance(message, dict):
+            # Batched/list inputs have no single stream; hand back the result.
+            yield {"type": "done", "message": message}
+            return
+
+        words = str(message.get("content", "")).split(" ")
+        for index in range(0, len(words), 5):
+            chunk = " ".join(words[index:index + 5])
+            if index + 5 < len(words):
+                chunk += " "
+            if chunk:
+                yield {"type": "delta", "text": chunk}
+                time.sleep(0.01)
+
+        yield {"type": "done", "message": message}
 
     def generate(self, inputs) -> Union[str, List[str]]:
 

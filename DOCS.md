@@ -183,6 +183,34 @@ response = pipeline.generate("Explain what this repository does.")
 print(response)
 ```
 
+## Example: Stream A Response
+
+Every pipeline also has `generate_stream(inputs)`, a generator of events:
+
+- `{"type": "delta", "text": str}` for each chunk of assistant text
+- `{"type": "thinking_delta", "text": str}` for reasoning tokens, where the
+  provider emits them
+- exactly one final `{"type": "done", "message": {...}}`, whose `message` is
+  identical to what `generate(inputs)` would have returned
+
+Concatenating every `delta` text reproduces the final message content, so a
+caller can render tokens as they arrive and then replace them with the final
+message without duplication.
+
+```python
+for event in pipeline.generate_stream("Explain what this repository does."):
+    if event["type"] == "delta":
+        print(event["text"], end="", flush=True)
+    elif event["type"] == "done":
+        final_message = event["message"]
+```
+
+`MinimaxPipeline`, `AnthropicAPIPipeline`, and `MockPipeline` stream token by
+token. Every other pipeline inherits the `LLMPipeline` default, which calls
+`generate` and yields only the final `done` event, so the interface is safe to
+call on any pipeline. Batched (list-of-lists) inputs always fall back to the
+single `done` event.
+
 ## Example: Deploy An SGLang Server
 
 ```bash
