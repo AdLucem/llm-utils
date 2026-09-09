@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Mock pipeline corpus cache (generated at runtime)
+.mock_pipeline_cache/

@@ -64,14 +64,23 @@ The package lives in `llm_utils/` and provides:
 
 - `llm_utils/pipelines.py`
   Shared pipeline abstraction and concrete implementations for SGLang,
-  MiniMax, Anthropic-compatible endpoints, local `transformers`, local `vllm`,
-  and mock testing.
+  MiniMax, Anthropic-compatible endpoints, OpenAI, local `transformers`,
+  local `vllm`, and mock testing.
 
 - `llm_utils/request_anthropic_api.py`
   Anthropic Messages API-compatible request helpers.
 
 - `llm_utils/request_minimax.py`
   MiniMax request helpers built on the OpenAI SDK.
+
+- `llm_utils/request_openai.py`
+  OpenAI Chat Completions request helpers built on the `openai` SDK
+  (`openai_chat_completion`, `openai_chat_completion_batch`,
+  `openai_chat_completion_stream`). Credentials come from `OPENAI_API_KEY`
+  (required) and `OPENAI_BASE_URL` (optional, defaults to the public API);
+  both are read from the environment or from the nearest `.env` found by
+  walking up from the working directory. Reasoning models (`gpt-5*`, `o1*`,
+  `o3*`, `o4*`) are sent without `temperature`.
 
 - `llm_utils/request_sglang.py`
   SGLang OpenAI-compatible request helpers.
@@ -205,8 +214,8 @@ for event in pipeline.generate_stream("Explain what this repository does."):
         final_message = event["message"]
 ```
 
-`MinimaxPipeline`, `AnthropicAPIPipeline`, and `MockPipeline` stream token by
-token. Every other pipeline inherits the `LLMPipeline` default, which calls
+`MinimaxPipeline`, `AnthropicAPIPipeline`, `OpenAIPipeline`, and `MockPipeline`
+stream token by token. Every other pipeline inherits the `LLMPipeline` default, which calls
 `generate` and yields only the final `done` event, so the interface is safe to
 call on any pipeline. Batched (list-of-lists) inputs always fall back to the
 single `done` event.

@@ -17,6 +17,11 @@ from .request_minimax import (
     minimax_chat_completion_batch,
     minimax_chat_completion_stream,
 )
+from .request_openai import (
+    openai_chat_completion,
+    openai_chat_completion_batch,
+    openai_chat_completion_stream,
+)
 from .request_sglang import (
     configure_logging,
     sglang_chat_completion,
@@ -34,6 +39,7 @@ PIPELINE_TYPES = Literal[
     "vllm",
     "minimax",
     "anthropic",
+    "openai",
     "mock",
 ]
 LOG_LEVELS = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
@@ -469,6 +475,55 @@ class AnthropicAPIPipeline(LLMPipeline):
         yield from anthropic_messages_completion_stream(cfg=self.cfg, messages=messages)
 
 
+class OpenAIPipeline(LLMPipeline):
+
+    def __init__(self, cfg: PipelineConfig):
+
+        super().__init__(cfg)
+
+        self.cfg = cfg
+        configure_logging(self.cfg.log_level)
+
+    def generate(self, inputs) -> Union[str, List[str]]:
+
+        messages, parallel = super().parse_inputs(inputs)
+
+        if parallel:
+            response = openai_chat_completion_batch(
+                cfg=self.cfg,
+                requests_messages=messages,
+            )
+
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += "OpenAI Query responses:\n"
+            for r in response:
+                debug_msg += f"{r}\n"
+                debug_msg += ("-" * 40) + "\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        else:
+            logging.debug("OpenAI Query messages: %s", messages)
+            response = openai_chat_completion(cfg=self.cfg, messages=messages)
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += f"OpenAI Query response: {response}\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        logging.debug(debug_msg)
+        return response
+
+    def generate_stream(self, inputs):
+        messages, parallel = super().parse_inputs(inputs)
+        if parallel:
+            # Batched requests have no meaningful token stream; fall back.
+            yield {"type": "done", "message": self.generate(inputs)}
+            return
+
+        logging.debug("OpenAI streaming query messages: %s", messages)
+        yield from openai_chat_completion_stream(cfg=self.cfg, messages=messages)
+
+
 class MockPipeline(LLMPipeline):
     """Mock pipeline for testing without a GPU.
 
@@ -795,6 +850,8 @@ def pipeline_from_config(cfg: PipelineConfig):
         llm_pipeline = MinimaxPipeline(cfg)
     elif cfg.pipeline_type == "anthropic":
         llm_pipeline = AnthropicAPIPipeline(cfg)
+    elif cfg.pipeline_type == "openai":
+        llm_pipeline = OpenAIPipeline(cfg)
     elif cfg.pipeline_type == "mock":
         llm_pipeline = MockPipeline(cfg)
     else:
@@ -836,6 +893,7 @@ __all__ = [
     "LOG_LEVELS",
     "MinimaxPipeline",
     "MockPipeline",
+    "OpenAIPipeline",
     "PIPELINE_TYPES",
     "PipelineConfig",
     "SGLangPipeline",

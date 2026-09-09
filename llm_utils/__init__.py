@@ -8,6 +8,11 @@ from .request_minimax import (
     minimax_chat_completion_batch,
     minimax_chat_completion_stream,
 )
+from .request_openai import (
+    openai_chat_completion,
+    openai_chat_completion_batch,
+    openai_chat_completion_stream,
+)
 from .request_anthropic_api import (
     anthropic_messages_completion,
     anthropic_messages_completion_batch,
@@ -18,6 +23,7 @@ from .pipelines import (
     LLMPipeline,
     MinimaxPipeline,
     MockPipeline,
+    OpenAIPipeline,
     PipelineConfig,
     SGLangPipeline,
     TransformersPipeline,
@@ -33,6 +39,7 @@ __all__ = [
     "LLMPipeline",
     "MinimaxPipeline",
     "MockPipeline",
+    "OpenAIPipeline",
     "PipelineConfig",
     "RequestConfig",
     "SGLangPipeline",
@@ -48,6 +55,9 @@ __all__ = [
     "minimax_chat_completion",
     "minimax_chat_completion_batch",
     "minimax_chat_completion_stream",
+    "openai_chat_completion",
+    "openai_chat_completion_batch",
+    "openai_chat_completion_stream",
     "pipeline_config_from_args",
     "pipeline_from_config",
     "sglang_chat_completion",
