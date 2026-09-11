@@ -65,13 +65,44 @@ The package lives in `llm_utils/` and provides:
 - `llm_utils/pipelines.py`
   Shared pipeline abstraction and concrete implementations for SGLang,
   MiniMax, Anthropic-compatible endpoints, local `transformers`, local `vllm`,
-  and mock testing.
+  and mock testing. Every `LLMPipeline` also exposes `generate_stream(inputs)`,
+  an incremental counterpart to `generate`: the base class implementation has
+  no real streaming and just yields the full blocking result as one final
+  `{"type": "done", "message": {...}}` event, so callers can treat every
+  pipeline the same way; `MinimaxPipeline` overrides it to yield
+  `{"type": "delta" | "thinking_delta", "text": str}` events as tokens
+  arrive from the underlying streamed API call, ending with the same `done`
+  event shape. `generate_stream` only supports single (non-batched) inputs.
 
 - `llm_utils/request_anthropic_api.py`
   Anthropic Messages API-compatible request helpers.
 
 - `llm_utils/request_minimax.py`
-  MiniMax request helpers built on the OpenAI SDK.
+  MiniMax request helpers built on the Anthropic SDK (MiniMax is served
+  through an Anthropic-compatible endpoint). `minimax_chat_completion_stream`
+  is the streaming counterpart to `minimax_chat_completion`: it opens
+  `client.messages.stream(...)` and yields delta/thinking-delta events as
+  they arrive, joining block texts with `"\n"` on each `content_block_stop`
+  to match `minimax_chat_completion`'s non-streaming accumulation exactly,
+  then yields a final `{"type": "done", "message": {...}}` event.
+
+  Both functions construct their `anthropic.Anthropic` client with
+  `max_retries=4` (double the SDK default of 2) and wrap the actual API call
+  in `try/except anthropic.AnthropicError`, translating any escaping
+  exception via `_raise_as_backend_error` into `MinimaxBackendError` — a
+  clean, human-readable message (never the raw Anthropic error dump, which
+  includes a JSON blob and request id) plus `retryable: bool` and
+  `status_code: int | None`. `anthropic.OverloadedError` (529) and
+  `RateLimitError` get their own friendly messages; any other
+  `APIStatusError` is retryable exactly when its status is in
+  `{408, 409, 429, 500, 502, 503, 504, 529}`; `APIConnectionError` (including
+  timeouts) is always retryable. This is what a MiniMax overload/rate-limit
+  surfaces as everywhere upstream (`MinimaxPipeline`, `Actor.generate`,
+  `centaurus/src/api.py`) instead of a raw SDK exception — none of those
+  layers needed to change to get a clean message, since they already just
+  propagate `str(exc)`; only `centaurus/src/api.py` additionally checks
+  `isinstance(exc, MinimaxBackendError)` to return a `503` with `retryable`
+  instead of a generic `500`.
 
 - `llm_utils/request_sglang.py`
   SGLang OpenAI-compatible request helpers.
@@ -105,6 +136,19 @@ Backend-specific integrations are exposed through extras:
 Some optional extras depend on newer Python versions than the package base
 itself. The core package and SGLang HTTP helper remain installable with older
 Python environments that already satisfy the repository code.
+
+When installing into a virtualenv, use `python3 -m pip install -e .` rather
+than a bare `pip install -e .` if a plain `pip` might resolve to a different
+interpreter's launcher (e.g. a user-level `~/.local/bin/pip` shadowing the
+venv's own `pip` on `PATH` even after activation) — otherwise the edit lands
+in the wrong environment and the venv silently keeps whatever `llm_utils`
+build it already had. Confirm with `python3 -c "import llm_utils; print(llm_utils.__file__)"`
+from outside this directory; if it resolves anywhere other than this
+repository's `llm_utils/`, the venv has a stale, non-editable copy (for
+example centaurus's `requirements.txt` pip-installs from
+`git+https://github.com/AdLucem/llm-utils.git` directly, independently of
+this submodule checkout) and edits here will not take effect until it is
+reinstalled from this path.
 
 ## Command-Line Usage
 
@@ -181,6 +225,18 @@ cfg = PipelineConfig(
 pipeline = pipeline_from_config(cfg)
 response = pipeline.generate("Explain what this repository does.")
 print(response)
+```
+
+To consume output incrementally instead of waiting for the full response,
+use `generate_stream` (every pipeline has it; only `MinimaxPipeline` streams
+real tokens today, others yield the whole result as one event):
+
+```python
+for event in pipeline.generate_stream("Explain what this repository does."):
+    if event["type"] == "delta":
+        print(event["text"], end="", flush=True)
+    elif event["type"] == "done":
+        message = event["message"]  # same shape `generate` returns
 ```
 
 ## Example: Deploy An SGLang Server

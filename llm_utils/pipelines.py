@@ -2,7 +2,7 @@ import logging
 import pathlib
 import re
 from collections import defaultdict
-from typing import List, Optional, Union
+from typing import Iterator, List, Optional, Union
 
 from ._compat import Literal, dataclass
 from .llm_configs import args_to_request_config
@@ -11,7 +11,11 @@ from .request_anthropic_api import (
     anthropic_messages_completion_batch,
     configure_logging as configure_anthropic_logging,
 )
-from .request_minimax import minimax_chat_completion, minimax_chat_completion_batch
+from .request_minimax import (
+    minimax_chat_completion,
+    minimax_chat_completion_batch,
+    minimax_chat_completion_stream,
+)
 from .request_sglang import (
     configure_logging,
     sglang_chat_completion,
@@ -110,6 +114,20 @@ class LLMPipeline:
             "It seems that you have accidentally used the base AgentPipeline class, "
             "which does not have a `generate` implementation."
         )
+
+    def generate_stream(self, inputs) -> Iterator[dict]:
+        """Incremental counterpart to `generate`.
+
+        The base implementation has no real streaming support: it performs
+        the full blocking call and yields the result as one final event, so
+        callers can treat every pipeline uniformly. Subclasses that can
+        stream tokens (currently `MinimaxPipeline`) override this to yield
+        `{"type": "delta" | "thinking_delta", "text": str}` events as they
+        arrive. Every implementation ends with `{"type": "done", "message":
+        {...}}` carrying the same shape `generate` returns for a single
+        (non-batched) input.
+        """
+        yield {"type": "done", "message": self.generate(inputs)}
 
 
 class TransformersPipeline(LLMPipeline):
@@ -389,6 +407,20 @@ class MinimaxPipeline(LLMPipeline):
 
         logging.debug(debug_msg)
         return response
+
+    def generate_stream(self, inputs) -> Iterator[dict]:
+
+        messages, parallel = super().parse_inputs(inputs)
+        if parallel:
+            raise NotImplementedError(
+                "MinimaxPipeline.generate_stream does not support batched/parallel inputs."
+            )
+
+        logging.debug("MiniMax Query messages (stream): %s", messages)
+        for event in minimax_chat_completion_stream(cfg=self.cfg, messages=messages):
+            if event["type"] == "done":
+                logging.debug("MiniMax Query response (stream): %s", event["message"])
+            yield event
 
 
 class AnthropicAPIPipeline(LLMPipeline):
