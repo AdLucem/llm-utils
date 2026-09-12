@@ -7,6 +7,7 @@ The package lives in `llm_utils/` and provides:
 
 - reusable request helpers for SGLang, MiniMax, Anthropic-compatible endpoints, and local vLLM
 - a shared pipeline abstraction in `llm_utils.pipelines`
+- image generation for OpenAI and MiniMax behind one interface in `llm_utils.images`
 - command-line entry points for running prompts, deploying SGLang, and offline batch inference
 
 ## Repository Structure
@@ -53,11 +54,26 @@ The package lives in `llm_utils/` and provides:
 - `llm_utils/_compat.py`
   Compatibility helpers for `dataclass` and `Literal`.
 
+- `llm_utils/_env.py`
+  Shared `.env` reading for every provider helper: `read_dotenv(path)` for one
+  file, `dotenv_values()` for the merge of every `.env` from the working
+  directory up to the filesystem root (nearest wins), `clean_env_value` for
+  stripping quotes, and `env_value(name)` for "environment first, then `.env`".
+
 - `llm_utils/cli.py`
   Main CLI entry point for sending a prompt file through a configured pipeline.
 
 - `llm_utils/deploy_sglang.py`
   CLI helper for launching an SGLang server process.
+
+- `llm_utils/images.py`
+  Provider-neutral image generation: `ImagePipelineConfig`, `ImageResult`, the
+  `ImagePipeline` base class with `OpenAIImagePipeline`, `MinimaxImagePipeline`
+  and `MockImagePipeline`, the `image_pipeline_from_config` factory, the
+  `ImageRequestRejected` / `ImageProviderError` split, and the dependency-free
+  header readers `png_dimensions` and `jpeg_dimensions`. `MockImagePipeline`
+  writes a solid-colour PNG with `zlib` and `struct`, so nothing here needs
+  Pillow.
 
 - `llm_utils/llm_configs.py`
   Shared config object and argparse-to-config conversion helpers for request code.
@@ -73,6 +89,14 @@ The package lives in `llm_utils/` and provides:
 - `llm_utils/request_minimax.py`
   MiniMax request helpers built on the OpenAI SDK.
 
+- `llm_utils/request_minimax_images.py`
+  MiniMax image generation over plain HTTP (`minimax_image_generation`).
+  Requires `MINIMAX_API_KEY`; `MINIMAX_IMAGE_BASE_URL` is optional and defaults
+  to `https://api.minimax.io/v1`. Unlike the chat helper it does **not** need
+  `MINIMAX_BASE_URL`. Always requests base64 because returned URLs expire after
+  24 hours, and checks `base_resp.status_code` because a failure can arrive
+  inside an HTTP 200.
+
 - `llm_utils/request_openai.py`
   OpenAI Chat Completions request helpers built on the `openai` SDK
   (`openai_chat_completion`, `openai_chat_completion_batch`,
@@ -81,6 +105,13 @@ The package lives in `llm_utils/` and provides:
   both are read from the environment or from the nearest `.env` found by
   walking up from the working directory. Reasoning models (`gpt-5*`, `o1*`,
   `o3*`, `o4*`) are sent without `temperature`.
+
+- `llm_utils/request_openai_images.py`
+  OpenAI Images API helper (`openai_image_generation`). Reuses the chat
+  helper's credentials, returns bytes rather than a URL, and converts an
+  HTTP 400 into `ImageRequestRejected` so a refused prompt is not retried.
+  `dall-e-*` models get `response_format="b64_json"` instead of
+  `output_format`/`quality`.
 
 - `llm_utils/request_sglang.py`
   SGLang OpenAI-compatible request helpers.
@@ -104,6 +135,7 @@ The base install includes the shared package and the SGLang HTTP request helper.
 Backend-specific integrations are exposed through extras:
 
 - `pip install -e ".[minimax]"` for MiniMax support
+- `pip install -e ".[images]"` for OpenAI and MiniMax image generation
 - `pip install -e ".[anthropic]"` for Anthropic-compatible endpoints
 - `pip install -e ".[transformers]"` for local Hugging Face generation
 - `pip install -e ".[vllm]"` for local vLLM generation
@@ -220,6 +252,68 @@ stream token by token. Every other pipeline inherits the `LLMPipeline` default, 
 call on any pipeline. Batched (list-of-lists) inputs always fall back to the
 single `done` event.
 
+## Example: Generate An Image
+
+`image_pipeline_from_config` mirrors `pipeline_from_config` one level down: pick
+a provider, ask for one image, get bytes back.
+
+```python
+from llm_utils import (
+    ImagePipelineConfig,
+    ImageProviderError,
+    ImageRequestRejected,
+    image_pipeline_from_config,
+)
+
+cfg = ImagePipelineConfig(
+    model="gpt-image-2.5-flare",   # or "image-01" for MiniMax, "mock" offline
+    pipeline_type="openai",        # "openai" | "minimax" | "mock"
+    aspect_ratio="landscape",      # "square" | "landscape" | "portrait"
+    quality="medium",              # OpenAI only
+    output_format="png",           # OpenAI only; MiniMax always returns JPEG
+    timeout=120,
+)
+
+try:
+    result = image_pipeline_from_config(cfg).generate_image(
+        "a labeled diagram of the water cycle"
+    )
+except ImageRequestRejected as exc:
+    print(f"The provider refused this prompt: {exc}")   # do not retry
+except ImageProviderError as exc:
+    print(f"The provider failed: {exc}")                # retrying may work
+else:
+    print(result.mime_type, result.width, result.height, len(result.data))
+    open("water-cycle.png", "wb").write(result.data)
+```
+
+`ImageResult` carries `data`, `mime_type`, `width`, `height`, `model`,
+`provider`, and `revised_prompt` (OpenAI only, `None` elsewhere). Width and
+height are read out of the file's own header, so they are `None` for a
+container these helpers cannot parse rather than a guess.
+
+The two exception types are the whole error contract:
+`ImageRequestRejected` means the provider said no to this prompt (content
+policy, an over-long prompt, invalid parameters) and the caller should show the
+reason; `ImageProviderError` means the provider itself failed and a retry may
+succeed. Everything else -- authentication, an org not yet enabled for a model,
+rate limits, timeouts -- propagates as the SDK's or `requests`' own exception.
+
+`MockImagePipeline` needs no credentials and no network: it returns a
+deterministic solid-colour PNG whose colour comes from the prompt. A prompt
+containing `[reject]` raises `ImageRequestRejected` and one containing `[fail]`
+raises `ImageProviderError`, which is how callers test both failure paths.
+
+Configuration read from the environment or the nearest `.env`:
+
+- `OPENAI_API_KEY` (required for `openai`) and `OPENAI_BASE_URL` (optional)
+- `MINIMAX_API_KEY` (required for `minimax`)
+- `MINIMAX_IMAGE_BASE_URL` (optional, defaults to `https://api.minimax.io/v1`;
+  set it to `https://api.minimaxi.com/v1` for the China region)
+
+Aspect ratios map to `1024x1024` / `1536x1024` / `1024x1536` on OpenAI and to
+`1:1` / `3:2` / `2:3` on MiniMax.
+
 ## Example: Deploy An SGLang Server
 
 ```bash
@@ -249,4 +343,11 @@ Run the focused test suite from the repository root with:
 
 ```bash
 pytest
+```
+
+The image pipelines have their own file, which runs without credentials or a
+network:
+
+```bash
+pytest test/test_image_pipelines.py -q
 ```

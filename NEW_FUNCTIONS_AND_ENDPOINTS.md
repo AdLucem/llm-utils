@@ -4,7 +4,7 @@
 
 ## llm-utils (`centaurus/fictive/llm-utils`, branch `farhan`)
 
-Package version bumped `0.1.0` -> `0.2.0`. Two themes: (1) token streaming through a uniform `generate_stream` interface, (2) a new OpenAI backend. Nothing existing was removed.
+Package version bumped `0.1.0` -> `0.2.0` -> `0.3.0`. Three themes: (1) token streaming through a uniform `generate_stream` interface, (2) a new OpenAI backend, (3) image generation for OpenAI and MiniMax behind one interface. Nothing existing was removed. `setup.py`'s `VERSION` and `__init__.__version__` disagreed (`0.1.0` vs `0.2.0`); both now read `0.3.0`.
 
 ### `llm_utils/pipelines.py`
 
@@ -101,8 +101,134 @@ Outputs: `delta` / `thinking_delta` events then `done` with `{"role": "assistant
 
 ### `llm_utils/__init__.py`
 
-Exports added: `anthropic_messages_completion_stream`, `minimax_chat_completion_stream`, `openai_chat_completion`, `openai_chat_completion_batch`, `openai_chat_completion_stream`, `OpenAIPipeline`. `__version__` is now `0.2.0`.
+Exports added: `anthropic_messages_completion_stream`, `minimax_chat_completion_stream`, `openai_chat_completion`, `openai_chat_completion_batch`, `openai_chat_completion_stream`, `OpenAIPipeline`, and the image layer (`ImagePipeline`, `ImagePipelineConfig`, `ImageResult`, `ImageRequestRejected`, `ImageProviderError`, `OpenAIImagePipeline`, `MinimaxImagePipeline`, `MockImagePipeline`, `image_pipeline_from_config`, `openai_image_generation`, `minimax_image_generation`, `png_dimensions`, `jpeg_dimensions`). `__version__` is now `0.3.0`.
+
+### `llm_utils/_env.py` (new file)
+
+Environment variables read by this module: `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `MINIMAX_API_KEY`, `MINIMAX_BASE_URL`, `MINIMAX_IMAGE_BASE_URL` -- it is the single reader every provider helper now goes through.
+
+function/api endpoint: `_env.read_dotenv`
+Reads `KEY=VALUE` pairs from one `.env` file, skipping comments and blank lines and stripping surrounding quotes. Defaults to `Path.cwd() / ".env"`.
+`centaurus/fictive/llm-utils/llm_utils/_env.py:16`
+Prerequisites: None.
+Inputs: `path: Optional[Path]`.
+Outputs: `Dict[str, str]`; empty when the file does not exist.
+
+function/api endpoint: `_env.dotenv_values`
+Merges every `.env` from the working directory up to the filesystem root, nearest wins. Moved here from `request_openai`; `request_minimax` now uses it too, which fixes MiniMax keys in the repository root being invisible when the server is started from `centaurus/`.
+`centaurus/fictive/llm-utils/llm_utils/_env.py:53`
+Prerequisites: None.
+Inputs: none.
+Outputs: `Dict[str, str]`.
+
+function/api endpoint: `_env.clean_env_value`
+Strips whitespace and one layer of matching quotes from an environment value.
+`centaurus/fictive/llm-utils/llm_utils/_env.py:68`
+Prerequisites: None.
+Inputs: `value: Optional[str]`.
+Outputs: `Optional[str]`; `None` in, `None` out.
+
+function/api endpoint: `_env.env_value`
+"Process environment first, then the merged `.env`" lookup for one variable.
+`centaurus/fictive/llm-utils/llm_utils/_env.py:80`
+Prerequisites: None.
+Inputs: `name: str`, optional pre-computed `values: Dict[str, str]`.
+Outputs: `Optional[str]`, already cleaned.
+
+`request_openai.py` and `request_minimax.py` keep `_read_dotenv`, `_dotenv_values` and `_clean_env_value` as aliases of these, so existing callers are unaffected.
+
+### `llm_utils/images.py` (new file)
+
+function/api endpoint: `images.ImagePipelineConfig` (dataclass)
+Configuration for one image pipeline.
+`centaurus/fictive/llm-utils/llm_utils/images.py:69`
+Prerequisites: None.
+Inputs: `model: str`; `pipeline_type: "openai"|"minimax"|"mock"` (default `openai`); `aspect_ratio: "square"|"landscape"|"portrait"` (default `landscape`); `quality: Optional[str]` (default `medium`, OpenAI only); `output_format: str` (default `png`, OpenAI only); `timeout: int` (default `120`); `log_level: str` (default `INFO`).
+Outputs: the config instance.
+
+function/api endpoint: `images.ImageResult` (dataclass)
+One generated image and what is known about it.
+`centaurus/fictive/llm-utils/llm_utils/images.py:86`
+Prerequisites: None.
+Inputs: `data: bytes`, `mime_type: str`, `width: Optional[int]`, `height: Optional[int]`, `model: str`, `provider: str`, `revised_prompt: Optional[str] = None`.
+Outputs: the result instance. `width`/`height` are `None` when the container's header could not be parsed.
+
+function/api endpoint: `images.ImageRequestRejected` / `images.ImageProviderError` (exceptions)
+The whole error contract of this layer. `ImageRequestRejected` means the provider refused this prompt (content policy, over-long prompt, invalid parameters) and must not be retried; `ImageProviderError` means the provider itself failed and a retry may work.
+`centaurus/fictive/llm-utils/llm_utils/images.py:103` and `:111`
+Prerequisites: None.
+Inputs: a message string.
+Outputs: the exception instances.
+
+function/api endpoint: `images.ImagePipeline.generate_image`
+Base method every provider pipeline implements; the base class raises `NotImplementedError`.
+`centaurus/fictive/llm-utils/llm_utils/images.py:200` (`OpenAIImagePipeline` at :225, `MinimaxImagePipeline` at :236, `MockImagePipeline` at :253)
+Prerequisites: the selected provider's credentials; none for `mock`.
+Inputs: `prompt: str`.
+Outputs: `ImageResult`. Raises `ImageRequestRejected` or `ImageProviderError` per the contract above.
+
+function/api endpoint: `images.image_pipeline_from_config`
+Factory mirroring `pipeline_from_config`, one level down.
+`centaurus/fictive/llm-utils/llm_utils/images.py:284`
+Prerequisites: None to construct; credentials are only needed at `generate_image` time.
+Inputs: `cfg: ImagePipelineConfig`.
+Outputs: an `ImagePipeline` subclass instance. Raises `Exception` for an unknown `pipeline_type`.
+
+function/api endpoint: `images.png_dimensions` / `images.jpeg_dimensions` / `images.image_dimensions`
+Read `(width, height)` from a PNG's IHDR chunk or a JPEG's first start-of-frame marker, with no image library. `image_dimensions` tries both.
+`centaurus/fictive/llm-utils/llm_utils/images.py:118`, `:127`, `:153`
+Prerequisites: None.
+Inputs: `data: bytes`.
+Outputs: `Optional[Tuple[int, int]]`; `None` when the bytes are not that format.
+
+function/api endpoint: `images.solid_png`
+Builds a single-colour truecolour PNG with `zlib` and `struct` (IHDR, IDAT, IEND). This is why the package needs no Pillow.
+`centaurus/fictive/llm-utils/llm_utils/images.py:165`
+Prerequisites: None.
+Inputs: `width: int`, `height: int`, `colour: (r, g, b)`.
+Outputs: `bytes` of a valid PNG.
+
+function/api endpoint: `images.mime_type_for`
+Maps an `output_format` (`png`/`jpeg`/`jpg`/`webp`) to its media type, defaulting to `image/png`.
+`centaurus/fictive/llm-utils/llm_utils/images.py:159`
+Prerequisites: None.
+Inputs: `output_format: str`.
+Outputs: `str`.
+
+### `llm_utils/request_openai_images.py` (new file)
+
+function/api endpoint: `request_openai_images.openai_image_generation`
+Generates exactly one image through `client.images.generate` and returns its bytes. Maps the aspect ratio to `1024x1024` / `1536x1024` / `1024x1536`; sends `output_format` and `quality` for `gpt-image-*` models and `response_format="b64_json"` for `dall-e-*` ones; converts an HTTP 400 into `ImageRequestRejected` so a refused prompt is never retried. Authentication, permission (an org not enabled for a model), rate-limit, timeout and 5xx errors propagate as the SDK's own exceptions, which callers already classify by name as retryable.
+`centaurus/fictive/llm-utils/llm_utils/request_openai_images.py:112`
+Prerequisites: `OPENAI_API_KEY` (required) and `OPENAI_BASE_URL` (optional) from env or the nearest `.env`; `openai` pip package.
+Inputs: `cfg: ImagePipelineConfig`, `prompt: str`.
+Outputs: `ImageResult` with `provider="openai"`, `revised_prompt` when the model returned one, and dimensions read from the returned bytes (falling back to the requested size).
+
+function/api endpoint: `request_openai_images._client` / `_short` / `_generation_kwargs` / `_requested_dimensions` / `_openai_module` (private helpers)
+Client construction reusing `request_openai._get_openai_credentials`, error-message shortening to 300 characters, request-body building, and the size fallback.
+`centaurus/fictive/llm-utils/llm_utils/request_openai_images.py:44-109`
+Prerequisites: as above.
+Inputs: `cfg` / an exception / `cfg, prompt` / a `"WxH"` string.
+Outputs: an `openai.OpenAI` client, a short string, a kwargs dict, a `(width, height)` pair.
+
+### `llm_utils/request_minimax_images.py` (new file)
+
+function/api endpoint: `request_minimax_images.minimax_image_generation`
+Generates one image with `POST {base}/image_generation` over plain `requests`. Always asks for base64 (returned URLs expire after 24 hours) and checks `base_resp.status_code` because MiniMax reports failures inside an HTTP 200. Prompts longer than 1500 characters are rejected up front rather than silently truncated. 401/403 and 429 become `ImageProviderError`, other 4xx become `ImageRequestRejected`, 5xx become `ImageProviderError`; `requests.Timeout` and `requests.ConnectionError` propagate.
+`centaurus/fictive/llm-utils/llm_utils/request_minimax_images.py:97`
+Prerequisites: `MINIMAX_API_KEY` (required). `MINIMAX_IMAGE_BASE_URL` is optional and defaults to `https://api.minimax.io/v1`; unlike the chat helper this does **not** require `MINIMAX_BASE_URL`. Practical rate limit is about 10 requests per minute.
+Inputs: `cfg: ImagePipelineConfig` (uses `model`, `aspect_ratio`, `timeout`), `prompt: str` (<= 1500 characters).
+Outputs: `ImageResult` with `mime_type="image/jpeg"`, `provider="minimax"`, and dimensions read from the JPEG header.
+
+function/api endpoint: `request_minimax_images._get_minimax_image_credentials` / `_response_detail` (private helpers)
+Credential loading through `_env.dotenv_values`, and a short explanation pulled out of an error response whatever shape it arrived in.
+`centaurus/fictive/llm-utils/llm_utils/request_minimax_images.py:56` and `:79`
+Prerequisites: as above.
+Inputs: none / a `requests` response.
+Outputs: `{"api_key", "base_url"}` dict (raises `ValueError` naming `MINIMAX_API_KEY` when absent) / a string.
 
 ### Other
-- `DOCS.md`: documents the streaming contract and the OpenAI helpers (per the repo's `AGENTS.md` documentation policy).
+- `DOCS.md`: documents the streaming contract, the OpenAI helpers, the shared `.env` loader, and the image layer (per the repo's `AGENTS.md` documentation policy).
+- `setup.py`: `VERSION` corrected to `0.3.0`; new `images` extra (`openai`, `requests`).
+- `test/test_image_pipelines.py` (new): 36 tests covering header parsing, the mock pipeline, and both provider helpers with stubbed transports. No network, no credentials. Run with `pytest test/test_image_pipelines.py -q`.
 - `.gitignore`: now ignores `llm_utils/.mock_pipeline_cache/`.

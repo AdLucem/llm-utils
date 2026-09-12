@@ -5,12 +5,21 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 try:
+    from ._env import clean_env_value, dotenv_values, read_dotenv
     from .llm_configs import RequestConfig
 except ImportError:  # pragma: no cover - direct script fallback
     try:
+        from llm_utils._env import clean_env_value, dotenv_values, read_dotenv
         from llm_utils.llm_configs import RequestConfig
     except ImportError:
+        from _env import clean_env_value, dotenv_values, read_dotenv
         from llm_configs import RequestConfig
+
+#: Kept as private aliases so existing callers and tests that reach for the
+#: old module-level names keep working; the implementations now live in `_env`.
+_read_dotenv = read_dotenv
+_dotenv_values = dotenv_values
+_clean_env_value = clean_env_value
 
 
 #: Model families that only accept the API's default sampling settings and
@@ -20,63 +29,6 @@ REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
 
-def _read_dotenv(path: Path) -> Dict[str, str]:
-    """Read simple KEY=VALUE pairs from a .env file when present."""
-
-    values: Dict[str, str] = {}
-    if not path.exists():
-        return values
-
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-
-        if not key:
-            continue
-
-        if (
-            len(value) >= 2
-            and value[0] == value[-1]
-            and value[0] in {"'", '"'}
-        ):
-            value = value[1:-1]
-
-        values[key] = value
-
-    return values
-
-
-def _dotenv_values() -> Dict[str, str]:
-    """Merge every `.env` found from the working directory up to the filesystem root.
-
-    The nearest `.env` wins. Walking upward matters because the API server is
-    launched from `centaurus/` while the checkout keeps its `.env` at the repo
-    root, one level above.
-    """
-
-    values: Dict[str, str] = {}
-    for directory in (Path.cwd(), *Path.cwd().parents):
-        for key, value in _read_dotenv(directory / ".env").items():
-            values.setdefault(key, value)
-    return values
-
-
-def _clean_env_value(value: Optional[str]) -> Optional[str]:
-    """Strip whitespace and optional quote characters from environment values."""
-    if value is None:
-        return None
-
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        value = value[1:-1]
-    return value
-
-
 def _get_openai_credentials() -> Dict[str, str]:
     """Load OpenAI credentials from .env and environment variables.
 
@@ -84,13 +36,13 @@ def _get_openai_credentials() -> Dict[str, str]:
     API and is there for Azure or gateway deployments.
     """
 
-    dotenv_values = _dotenv_values()
+    values = dotenv_values()
 
-    api_key = _clean_env_value(
-        os.environ.get("OPENAI_API_KEY") or dotenv_values.get("OPENAI_API_KEY")
+    api_key = clean_env_value(
+        os.environ.get("OPENAI_API_KEY") or values.get("OPENAI_API_KEY")
     )
-    base_url = _clean_env_value(
-        os.environ.get("OPENAI_BASE_URL") or dotenv_values.get("OPENAI_BASE_URL")
+    base_url = clean_env_value(
+        os.environ.get("OPENAI_BASE_URL") or values.get("OPENAI_BASE_URL")
     ) or DEFAULT_BASE_URL
 
     if not api_key:

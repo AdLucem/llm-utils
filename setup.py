@@ -5,7 +5,7 @@ from pathlib import Path
 from setuptools import find_packages, setup
 
 
-VERSION = "0.1.0"
+VERSION = "0.3.0"
 README = Path(__file__).with_name("DOCS.md").read_text(encoding="utf-8")
 
 
@@ -26,6 +26,10 @@ setup(
         ],
         "dev": [
             "pytest>=6.2.0",
+        ],
+        "images": [
+            "openai>=1.0.0",
+            "requests>=2.20.0",
         ],
         "minimax": [
             "openai>=1.0.0",

@@ -6,55 +6,33 @@ from typing import Dict, List
 import anthropic 
 
 try:
+    from ._env import clean_env_value, dotenv_values, read_dotenv
     from .llm_configs import RequestConfig
 except ImportError:  # pragma: no cover - direct script fallback
     try:
+        from llm_utils._env import clean_env_value, dotenv_values, read_dotenv
         from llm_utils.llm_configs import RequestConfig
     except ImportError:
+        from _env import clean_env_value, dotenv_values, read_dotenv
         from llm_configs import RequestConfig
 
 
 DEFAULT_DOTENV_PATH = Path.cwd() / ".env"
 
-
-def _read_dotenv(path: Path = DEFAULT_DOTENV_PATH) -> Dict[str, str]:
-    """Read simple KEY=VALUE pairs from a .env file when present."""
-
-    values: Dict[str, str] = {}
-    if not path.exists():
-        return values
-
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-
-        if not key:
-            continue
-
-        if (
-            len(value) >= 2
-            and value[0] == value[-1]
-            and value[0] in {"'", '"'}
-        ):
-            value = value[1:-1]
-
-        values[key] = value
-
-    return values
+#: Kept as private aliases so existing callers keep working; the implementations
+#: now live in `_env`, which also fixes this module only ever reading the
+#: working directory's `.env` and missing keys kept one level up.
+_read_dotenv = read_dotenv
+_clean_env_value = clean_env_value
 
 
 def _get_minimax_credentials() -> Dict[str, str]:
     """Load MiniMax credentials from .env and environment variables."""
 
-    dotenv_values = _read_dotenv()
+    values = dotenv_values()
 
-    api_key = _clean_env_value(os.environ.get("MINIMAX_API_KEY") or dotenv_values.get("MINIMAX_API_KEY"))
-    base_url = _clean_env_value(os.environ.get("MINIMAX_BASE_URL") or dotenv_values.get("MINIMAX_BASE_URL"))
+    api_key = clean_env_value(os.environ.get("MINIMAX_API_KEY") or values.get("MINIMAX_API_KEY"))
+    base_url = clean_env_value(os.environ.get("MINIMAX_BASE_URL") or values.get("MINIMAX_BASE_URL"))
 
     missing = []
     if not api_key:
@@ -72,17 +50,6 @@ def _get_minimax_credentials() -> Dict[str, str]:
         raise ValueError("MINIMAX_BASE_URL must start with http:// or https://.")
 
     return {"api_key": api_key, "base_url": base_url}
-
-
-def _clean_env_value(value: str | None) -> str | None:
-    """Strip whitespace and optional quote characters from environment values."""
-    if value is None:
-        return None
-
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        value = value[1:-1]
-    return value
 
 
 def minimax_chat_completion(
