@@ -9,9 +9,19 @@ from .llm_configs import args_to_request_config
 from .request_anthropic_api import (
     anthropic_messages_completion,
     anthropic_messages_completion_batch,
+    anthropic_messages_completion_stream,
     configure_logging as configure_anthropic_logging,
 )
-from .request_minimax import minimax_chat_completion, minimax_chat_completion_batch
+from .request_minimax import (
+    minimax_chat_completion,
+    minimax_chat_completion_batch,
+    minimax_chat_completion_stream,
+)
+from .request_openai import (
+    openai_chat_completion,
+    openai_chat_completion_batch,
+    openai_chat_completion_stream,
+)
 from .request_sglang import (
     configure_logging,
     sglang_chat_completion,
@@ -29,6 +39,7 @@ PIPELINE_TYPES = Literal[
     "vllm",
     "minimax",
     "anthropic",
+    "openai",
     "mock",
 ]
 LOG_LEVELS = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
@@ -110,6 +121,20 @@ class LLMPipeline:
             "It seems that you have accidentally used the base AgentPipeline class, "
             "which does not have a `generate` implementation."
         )
+
+    def generate_stream(self, inputs):
+        """Yield generation events for one turn.
+
+        Events are `{"type": "delta"|"thinking_delta", "text": str}` while output
+        arrives, then exactly one `{"type": "done", "message": {...}}` whose
+        message is what `generate` would have returned.
+
+        This default implementation does not stream: it runs `generate` and
+        yields only the final event, so every pipeline satisfies the interface
+        and callers never need to check whether streaming is supported.
+        """
+
+        yield {"type": "done", "message": self.generate(inputs)}
 
 
 class TransformersPipeline(LLMPipeline):
@@ -390,6 +415,16 @@ class MinimaxPipeline(LLMPipeline):
         logging.debug(debug_msg)
         return response
 
+    def generate_stream(self, inputs):
+        messages, parallel = super().parse_inputs(inputs)
+        if parallel:
+            # Batched requests have no meaningful token stream; fall back.
+            yield {"type": "done", "message": self.generate(inputs)}
+            return
+
+        logging.debug("MiniMax streaming query messages: %s", messages)
+        yield from minimax_chat_completion_stream(cfg=self.cfg, messages=messages)
+
 
 class AnthropicAPIPipeline(LLMPipeline):
 
@@ -428,6 +463,65 @@ class AnthropicAPIPipeline(LLMPipeline):
 
         logging.debug(debug_msg)
         return response
+
+    def generate_stream(self, inputs):
+        messages, parallel = super().parse_inputs(inputs)
+        if parallel:
+            # Batched requests have no meaningful token stream; fall back.
+            yield {"type": "done", "message": self.generate(inputs)}
+            return
+
+        logging.debug("Anthropic streaming query messages: %s", messages)
+        yield from anthropic_messages_completion_stream(cfg=self.cfg, messages=messages)
+
+
+class OpenAIPipeline(LLMPipeline):
+
+    def __init__(self, cfg: PipelineConfig):
+
+        super().__init__(cfg)
+
+        self.cfg = cfg
+        configure_logging(self.cfg.log_level)
+
+    def generate(self, inputs) -> Union[str, List[str]]:
+
+        messages, parallel = super().parse_inputs(inputs)
+
+        if parallel:
+            response = openai_chat_completion_batch(
+                cfg=self.cfg,
+                requests_messages=messages,
+            )
+
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += "OpenAI Query responses:\n"
+            for r in response:
+                debug_msg += f"{r}\n"
+                debug_msg += ("-" * 40) + "\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        else:
+            logging.debug("OpenAI Query messages: %s", messages)
+            response = openai_chat_completion(cfg=self.cfg, messages=messages)
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += f"OpenAI Query response: {response}\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        logging.debug(debug_msg)
+        return response
+
+    def generate_stream(self, inputs):
+        messages, parallel = super().parse_inputs(inputs)
+        if parallel:
+            # Batched requests have no meaningful token stream; fall back.
+            yield {"type": "done", "message": self.generate(inputs)}
+            return
+
+        logging.debug("OpenAI streaming query messages: %s", messages)
+        yield from openai_chat_completion_stream(cfg=self.cfg, messages=messages)
 
 
 class MockPipeline(LLMPipeline):
@@ -661,6 +755,28 @@ class MockPipeline(LLMPipeline):
 
         return self._detokenize(output_tokens).strip()
 
+    def generate_stream(self, inputs):
+        """Emit the mock reply in small chunks, so offline UI work sees streaming."""
+
+        import time
+
+        message = self.generate(inputs)
+        if not isinstance(message, dict):
+            # Batched/list inputs have no single stream; hand back the result.
+            yield {"type": "done", "message": message}
+            return
+
+        words = str(message.get("content", "")).split(" ")
+        for index in range(0, len(words), 5):
+            chunk = " ".join(words[index:index + 5])
+            if index + 5 < len(words):
+                chunk += " "
+            if chunk:
+                yield {"type": "delta", "text": chunk}
+                time.sleep(0.01)
+
+        yield {"type": "done", "message": message}
+
     def generate(self, inputs) -> Union[str, List[str]]:
 
         def response_from_message_list(message_list):
@@ -734,6 +850,8 @@ def pipeline_from_config(cfg: PipelineConfig):
         llm_pipeline = MinimaxPipeline(cfg)
     elif cfg.pipeline_type == "anthropic":
         llm_pipeline = AnthropicAPIPipeline(cfg)
+    elif cfg.pipeline_type == "openai":
+        llm_pipeline = OpenAIPipeline(cfg)
     elif cfg.pipeline_type == "mock":
         llm_pipeline = MockPipeline(cfg)
     else:
@@ -775,6 +893,7 @@ __all__ = [
     "LOG_LEVELS",
     "MinimaxPipeline",
     "MockPipeline",
+    "OpenAIPipeline",
     "PIPELINE_TYPES",
     "PipelineConfig",
     "SGLangPipeline",

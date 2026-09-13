@@ -121,6 +121,52 @@ def anthropic_messages_completion(
     return {"role": "assistant", "content": content}
 
 
+def anthropic_messages_completion_stream(
+    cfg: RequestConfig,
+    messages: List[Dict[str, str]],
+):
+    """Stream one Messages API request.
+
+    Yields `{"type": "delta"|"thinking_delta", "text": str}` as tokens arrive and
+    finishes with `{"type": "done", "message": {...}}`, whose message has the same
+    shape `anthropic_messages_completion` returns.
+    """
+
+    try:
+        from anthropic import Anthropic
+    except ImportError as exc:
+        raise ImportError(
+            "anthropic is required to use Anthropic helpers. Install `llm-utils[anthropic]`."
+        ) from exc
+
+    client = Anthropic(
+        api_key=cfg.token,
+        base_url=cfg.base_url,
+        timeout=cfg.timeout,
+    )
+
+    text = ""
+    with client.messages.stream(
+        model=cfg.model,
+        system=_extract_system_prompt(messages),
+        messages=_to_anthropic_messages(messages),
+        temperature=cfg.temperature,
+        max_tokens=cfg.max_new_tokens,
+    ) as stream:
+        for event in stream:
+            if getattr(event, "type", None) != "content_block_delta":
+                continue
+            delta = getattr(event, "delta", None)
+            delta_type = getattr(delta, "type", None)
+            if delta_type == "text_delta":
+                text += delta.text
+                yield {"type": "delta", "text": delta.text}
+            elif delta_type == "thinking_delta":
+                yield {"type": "thinking_delta", "text": delta.thinking}
+
+    yield {"type": "done", "message": {"role": "assistant", "content": text}}
+
+
 def anthropic_messages_completion_batch(
     cfg: RequestConfig,
     requests_messages: List[List[Dict[str, str]]],
