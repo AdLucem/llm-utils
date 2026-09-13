@@ -4,7 +4,7 @@
 
 ## llm-utils (`centaurus/fictive/llm-utils`, branch `farhan`)
 
-Package version bumped `0.1.0` -> `0.2.0` -> `0.3.0`. Three themes: (1) token streaming through a uniform `generate_stream` interface, (2) a new OpenAI backend, (3) image generation for OpenAI and MiniMax behind one interface. Nothing existing was removed. `setup.py`'s `VERSION` and `__init__.__version__` disagreed (`0.1.0` vs `0.2.0`); both now read `0.3.0`.
+Package version bumped `0.1.0` -> `0.2.0` -> `0.3.0`. Four themes: (1) token streaming through a uniform `generate_stream` interface, (2) a new OpenAI backend, (3) image generation for OpenAI and MiniMax behind one interface, (4) readable, retry-aware MiniMax errors (`MinimaxBackendError`, merged from `vibecode` commit `5451c8d`). Nothing existing was removed. `setup.py`'s `VERSION` and `__init__.__version__` disagreed (`0.1.0` vs `0.2.0`); both now read `0.3.0`.
 
 ### `llm_utils/pipelines.py`
 
@@ -18,7 +18,7 @@ Outputs: generator of event dicts. Contract shared by all overrides: zero or mor
 function/api endpoint: `MinimaxPipeline.generate_stream`
 Streams a single MiniMax turn token by token via `minimax_chat_completion_stream`. Batched (list-of-lists) inputs fall back to one `done` event.
 `centaurus/fictive/llm-utils/llm_utils/pipelines.py:418`
-Prerequisites: `MINIMAX_API_KEY` and `MINIMAX_BASE_URL` (env or `.env` at the fixed path used by `request_minimax._read_dotenv`); `anthropic` pip package.
+Prerequisites: `MINIMAX_API_KEY` and `MINIMAX_BASE_URL` (process env first, then every `.env` from the working directory up to `/`, via `_env.dotenv_values`); `anthropic` pip package.
 Inputs: `inputs` as above.
 Outputs: `delta` / `thinking_delta` events, then `done` with `{"role": "assistant", "thinking": str, "content": str}`.
 
@@ -32,7 +32,7 @@ Outputs: `delta` / `thinking_delta` events, then `done` with `{"role": "assistan
 function/api endpoint: `OpenAIPipeline` (class) / `OpenAIPipeline.generate` / `OpenAIPipeline.generate_stream`
 New backend selected by `pipeline_type="openai"`. `generate` mirrors the other pipelines (single request or batch, debug logging); `generate_stream` streams a single turn and falls back to `done` for batches.
 `centaurus/fictive/llm-utils/llm_utils/pipelines.py:478` (`generate` at 487, `generate_stream` at 516)
-Prerequisites: `OPENAI_API_KEY` (required) and `OPENAI_BASE_URL` (optional, default `https://api.openai.com/v1`), from env or the nearest `.env` walking up from CWD; `openai` pip package (not yet listed in llm-utils extras -- install manually).
+Prerequisites: `OPENAI_API_KEY` (required) and `OPENAI_BASE_URL` (optional, default `https://api.openai.com/v1`), from env or the nearest `.env` walking up from CWD; `openai` pip package (pulled in by the `images` or `minimax` extra).
 Inputs: `cfg: PipelineConfig` (uses `model`, `temperature`, `max_new_tokens`, `timeout`, `log_level`); `inputs` as above.
 Outputs: `generate` -> `{"role": "assistant", "thinking": str, "content": str}` or a list of those for batches. `generate_stream` -> `thinking_delta` / `delta` events then `done` with the same message shape.
 
@@ -55,28 +55,28 @@ Note: `llm_utils/cli.py` argparse `--pipeline_type` choices still list only `sgl
 
 function/api endpoint: `request_openai.openai_chat_completion`
 Sends one Chat Completions request and returns the assistant message. Reasoning-model families (`gpt-5*`, `o1*`, `o3*`, `o4*`) are sent without `temperature`; the token cap is passed as `max_completion_tokens`.
-`centaurus/fictive/llm-utils/llm_utils/request_openai.py:147`
+`centaurus/fictive/llm-utils/llm_utils/request_openai.py:99`
 Prerequisites: `OPENAI_API_KEY`; optional `OPENAI_BASE_URL`; `openai` pip package.
 Inputs: `cfg: RequestConfig` (`model`, `temperature`, `max_new_tokens`, `timeout`), `messages: List[{"role","content"}]`.
 Outputs: `{"role": "assistant", "thinking": str, "content": str}` (`thinking` comes from `reasoning_content` when the provider returns it, else `""`).
 
 function/api endpoint: `request_openai.openai_chat_completion_stream`
 Streaming variant of the above using `stream=True`.
-`centaurus/fictive/llm-utils/llm_utils/request_openai.py:157`
+`centaurus/fictive/llm-utils/llm_utils/request_openai.py:109`
 Prerequisites: same as `openai_chat_completion`.
 Inputs: `cfg: RequestConfig`, `messages`.
 Outputs: generator of `thinking_delta` / `delta` events followed by `done` with the same message shape as the non-streaming call.
 
 function/api endpoint: `request_openai.openai_chat_completion_batch`
 Sequentially runs `openai_chat_completion` for each message list.
-`centaurus/fictive/llm-utils/llm_utils/request_openai.py:196`
+`centaurus/fictive/llm-utils/llm_utils/request_openai.py:148`
 Prerequisites: same as `openai_chat_completion`.
 Inputs: `cfg: RequestConfig`, `requests_messages: List[List[message]]`.
 Outputs: `List[message]` in input order.
 
 function/api endpoint: `request_openai._get_openai_credentials` / `_dotenv_values` / `_read_dotenv` / `_clean_env_value` / `_client` / `_completion_kwargs` / `_message_from_choice` (private helpers)
 Credential loading walks from CWD up to `/` merging every `.env` (nearest wins) so the server launched from `centaurus/` still finds the repo-root `.env`. Raises `ValueError` if `OPENAI_API_KEY` is missing or `OPENAI_BASE_URL` lacks an `http(s)://` scheme; `ImportError` if `openai` is not installed.
-`centaurus/fictive/llm-utils/llm_utils/request_openai.py:24-144`
+`centaurus/fictive/llm-utils/llm_utils/request_openai.py:20-97`
 Prerequisites: as above.
 Inputs: none / `cfg` / `messages` respectively.
 Outputs: `{"api_key", "base_url"}` dict, an `openai.OpenAI` client, a request kwargs dict, or a normalised assistant message.
@@ -92,16 +92,35 @@ Outputs: `delta` / `thinking_delta` events then `done` with `{"role": "assistant
 
 ### `llm_utils/request_minimax.py`
 
+This file also carries the MiniMax error handling from llm-utils `5451c8d` (branch `vibecode`, the commit fictive `main` pinned), merged into `farhan` so that pinning `farhan` drops nothing.
+
+function/api endpoint: `request_minimax.MinimaxBackendError` (exception)
+Raised instead of a raw Anthropic SDK exception when the MiniMax backend errors out or cannot be reached. `str(exc)` is a short, readable message rather than the SDK's JSON dump.
+`centaurus/fictive/llm-utils/llm_utils/request_minimax.py:68`
+Prerequisites: None.
+Inputs: `message: str`, keyword-only `retryable: bool`, `status_code: int | None = None`.
+Outputs: the exception, with `.retryable` (true when the condition should clear on its own: overload, rate limit, transient server or connection trouble) and `.status_code` (the HTTP status when there was one). Exported from `llm_utils`.
+
+function/api endpoint: `request_minimax._raise_as_backend_error` (private helper)
+Translates the exception currently being handled. `APIStatusError` becomes `MinimaxBackendError`, retryable exactly for statuses in `_RETRYABLE_STATUS_CODES` (`408, 409, 429, 500, 502, 503, 504, 529`); `OverloadedError` (529) and `RateLimitError` get their own messages. `APIConnectionError`, which includes timeouts, is always retryable. Any other exception is re-raised unchanged.
+`centaurus/fictive/llm-utils/llm_utils/request_minimax.py:87` (constants `_RETRYABLE_STATUS_CODES` at `:58`, `_ANTHROPIC_CLIENT_MAX_RETRIES` at `:65`)
+Prerequisites: `anthropic` pip package; must be called from inside an `except` block.
+Inputs: `exc: Exception`.
+Outputs: never returns. Raises `MinimaxBackendError` with `__cause__` set to `exc`, or re-raises `exc`.
+
+function/api endpoint: `minimax_chat_completion` (modified)
+The Anthropic client is now built with `max_retries=4` (the SDK default is 2), and API failures are translated through `_raise_as_backend_error`.
+`centaurus/fictive/llm-utils/llm_utils/request_minimax.py:123`
+Prerequisites: `MINIMAX_API_KEY`, `MINIMAX_BASE_URL` (env or `.env`); `anthropic` and `openai` pip packages.
+Inputs: `cfg: RequestConfig` (`model`, `max_new_tokens`, `timeout`), `messages`.
+Outputs: `{"role": "assistant", "thinking": str, "content": str}`; raises `MinimaxBackendError` on a backend failure.
+
 function/api endpoint: `minimax_chat_completion_stream`
-Streams one MiniMax completion through the Anthropic-compatible endpoint; accumulates both thinking and text.
-`centaurus/fictive/llm-utils/llm_utils/request_minimax.py:125`
+Streams one MiniMax completion through the Anthropic-compatible endpoint, accumulating both thinking and text. A newline is added at each `content_block_stop`, so the final message joins blocks exactly as `minimax_chat_completion` does. Uses `max_retries=4`; a failure before or during the stream raises `MinimaxBackendError`.
+`centaurus/fictive/llm-utils/llm_utils/request_minimax.py:168`
 Prerequisites: `MINIMAX_API_KEY`, `MINIMAX_BASE_URL` (env or `.env`); `anthropic` pip package.
 Inputs: `cfg: RequestConfig` (`model`, `max_new_tokens`, `timeout`), `messages`.
-Outputs: `delta` / `thinking_delta` events then `done` with `{"role": "assistant", "thinking": str, "content": str}` (both stripped).
-
-### `llm_utils/__init__.py`
-
-Exports added: `anthropic_messages_completion_stream`, `minimax_chat_completion_stream`, `openai_chat_completion`, `openai_chat_completion_batch`, `openai_chat_completion_stream`, `OpenAIPipeline`, and the image layer (`ImagePipeline`, `ImagePipelineConfig`, `ImageResult`, `ImageRequestRejected`, `ImageProviderError`, `OpenAIImagePipeline`, `MinimaxImagePipeline`, `MockImagePipeline`, `image_pipeline_from_config`, `openai_image_generation`, `minimax_image_generation`, `png_dimensions`, `jpeg_dimensions`). `__version__` is now `0.3.0`.
+Outputs: `delta` / `thinking_delta` events, then `done` with `{"role": "assistant", "thinking": str, "content": str}` (both stripped).
 
 ### `llm_utils/_env.py` (new file)
 
@@ -227,8 +246,14 @@ Prerequisites: as above.
 Inputs: none / a `requests` response.
 Outputs: `{"api_key", "base_url"}` dict (raises `ValueError` naming `MINIMAX_API_KEY` when absent) / a string.
 
+### `llm_utils/__init__.py`
+
+Exports added: `anthropic_messages_completion_stream`, `MinimaxBackendError`, `minimax_chat_completion_stream`, `openai_chat_completion`, `openai_chat_completion_batch`, `openai_chat_completion_stream`, `OpenAIPipeline`, and the image layer (`ImagePipeline`, `ImagePipelineConfig`, `ImageResult`, `ImageRequestRejected`, `ImageProviderError`, `OpenAIImagePipeline`, `MinimaxImagePipeline`, `MockImagePipeline`, `image_pipeline_from_config`, `openai_image_generation`, `minimax_image_generation`, `png_dimensions`, `jpeg_dimensions`). `__version__` is now `0.3.0`.
+
 ### Other
-- `DOCS.md`: documents the streaming contract, the OpenAI helpers, the shared `.env` loader, and the image layer (per the repo's `AGENTS.md` documentation policy).
+- `DOCS.md`: documents the streaming contract, the OpenAI helpers, the shared `.env` loader, the image layer, and `MinimaxBackendError` (per the repo's `AGENTS.md` documentation policy).
 - `setup.py`: `VERSION` corrected to `0.3.0`; new `images` extra (`openai`, `requests`).
 - `test/test_image_pipelines.py` (new): 36 tests covering header parsing, the mock pipeline, and both provider helpers with stubbed transports. No network, no credentials. Run with `pytest test/test_image_pipelines.py -q`.
+- `test/test_minimax_errors.py` (new): 6 tests for the MiniMax error translation, built on stub `httpx` responses. No network, no credentials.
+- Merge of `5451c8d` (`vibecode`): `farhan`'s pipeline behaviour is kept (batched input to `MinimaxPipeline.generate_stream` falls back to one `done` event instead of raising; credentials come from `_env`). `vibecode`'s stream body is taken for its block-boundary newlines and error translation.
 - `.gitignore`: now ignores `llm_utils/.mock_pipeline_cache/`.
