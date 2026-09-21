@@ -16,12 +16,15 @@ else:
 def build_parser():
     """Create the command-line parser for the pipeline CLI."""
     parser = argparse.ArgumentParser(
-        description="Send a system/user prompt file through an SGLang, vLLM, MiniMax, or Anthropic-compatible pipeline.",
+        description=(
+            "Send a system/user prompt file through an SGLang, vLLM, MiniMax, "
+            "Anthropic-compatible, or OpenAI-compatible pipeline."
+        ),
     )
     parser.add_argument(
         "--pipeline-type",
         default="sglang",
-        choices=["sglang", "vllm", "minimax", "anthropic"],
+        choices=["sglang", "vllm", "minimax", "anthropic", "openai"],
         help="Pipeline backend to use (default: sglang).",
     )
     parser.add_argument(
@@ -78,11 +81,14 @@ def build_parser():
     )
     parser.add_argument(
         "--base-url",
-        help="Anthropic-compatible Messages API base URL, for example https://api.anthropic.com/v1.",
+        help=(
+            "API base URL for compatible endpoints. For OpenRouter with the "
+            "openai pipeline, use https://openrouter.ai/api/v1."
+        ),
     )
     parser.add_argument(
         "--token",
-        help="Authentication token or API key for Anthropic-compatible endpoints.",
+        help="Authentication token or API key for API-backed compatible endpoints.",
     )
     parser.add_argument(
         "--log-level",
@@ -144,6 +150,14 @@ def validate_args(args):
             raise ValueError("--base-url is required for the anthropic pipeline.")
         if not args.token:
             raise ValueError("--token is required for the anthropic pipeline.")
+    if args.pipeline_type == "openai":
+        import os
+
+        if not (args.token or os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
+            raise ValueError(
+                "--token, OPENAI_API_KEY, or OPENROUTER_API_KEY is required "
+                "for the openai pipeline."
+            )
     if args.max_new_tokens <= 0:
         raise ValueError("--max-new-tokens must be > 0.")
     if args.timeout <= 0:

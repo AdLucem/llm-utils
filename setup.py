@@ -30,6 +30,9 @@ setup(
         "minimax": [
             "openai>=1.0.0",
         ],
+        "openai": [
+            "openai>=1.0.0",
+        ],
         "offline-batch": [
             "pandas>=2.0.0",
             "sglang>=0.5.0",

@@ -5,7 +5,8 @@
 This repository is organized as an installable Python package named `llm-utils`.
 The package lives in `llm_utils/` and provides:
 
-- reusable request helpers for SGLang, MiniMax, Anthropic-compatible endpoints, and local vLLM
+- reusable request helpers for SGLang, MiniMax, Anthropic-compatible endpoints,
+  OpenAI-compatible endpoints, and local vLLM
 - a shared pipeline abstraction in `llm_utils.pipelines`
 - command-line entry points for running prompts, deploying SGLang, and offline batch inference
 
@@ -64,14 +65,18 @@ The package lives in `llm_utils/` and provides:
 
 - `llm_utils/pipelines.py`
   Shared pipeline abstraction and concrete implementations for SGLang,
-  MiniMax, Anthropic-compatible endpoints, local `transformers`, local `vllm`,
-  and mock testing.
+  MiniMax, Anthropic-compatible endpoints, OpenAI-compatible endpoints, local
+  `transformers`, local `vllm`, and mock testing.
 
 - `llm_utils/request_anthropic_api.py`
   Anthropic Messages API-compatible request helpers.
 
 - `llm_utils/request_minimax.py`
   MiniMax request helpers built on the OpenAI SDK.
+
+- `llm_utils/request_openai_api.py`
+  OpenAI-compatible chat completion request helpers for OpenAI, OpenRouter, and
+  other compatible endpoints.
 
 - `llm_utils/request_sglang.py`
   SGLang OpenAI-compatible request helpers.
@@ -96,6 +101,7 @@ Backend-specific integrations are exposed through extras:
 
 - `pip install -e ".[minimax]"` for MiniMax support
 - `pip install -e ".[anthropic]"` for Anthropic-compatible endpoints
+- `pip install -e ".[openai]"` for OpenAI-compatible endpoints such as OpenRouter
 - `pip install -e ".[transformers]"` for local Hugging Face generation
 - `pip install -e ".[vllm]"` for local vLLM generation
 - `pip install -e ".[offline-batch]"` for CSV-driven SGLang batch inference
@@ -163,6 +169,18 @@ llm-utils \
   --prompt-file sample-prompt.txt
 ```
 
+To run an OpenRouter model through the OpenAI-compatible pipeline:
+
+```bash
+export OPENROUTER_API_KEY="sk-or-..."
+
+llm-utils \
+  --pipeline-type openai \
+  --model minimax/minimax-m2 \
+  --prompt-file sample-prompt.txt \
+  --base-url https://openrouter.ai/api/v1
+```
+
 ## Example: Use The Package In Python
 
 ```python
@@ -181,6 +199,26 @@ cfg = PipelineConfig(
 pipeline = pipeline_from_config(cfg)
 response = pipeline.generate("Explain what this repository does.")
 print(response)
+```
+
+For OpenRouter in Python:
+
+```python
+from llm_utils import PipelineConfig, pipeline_from_config
+
+cfg = PipelineConfig(
+    model="minimax/minimax-m2",
+    pipeline_type="openai",
+    base_url="https://openrouter.ai/api/v1",
+    token="sk-or-...",
+    temperature=0.7,
+    max_new_tokens=256,
+    timeout=60,
+)
+
+pipeline = pipeline_from_config(cfg)
+response = pipeline.generate("Explain what this repository does.")
+print(response["content"])
 ```
 
 ## Example: Deploy An SGLang Server

@@ -12,6 +12,11 @@ from .request_anthropic_api import (
     configure_logging as configure_anthropic_logging,
 )
 from .request_minimax import minimax_chat_completion, minimax_chat_completion_batch
+from .request_openai_api import (
+    configure_logging as configure_openai_logging,
+    openai_chat_completion,
+    openai_chat_completion_batch,
+)
 from .request_sglang import (
     configure_logging,
     sglang_chat_completion,
@@ -29,6 +34,7 @@ PIPELINE_TYPES = Literal[
     "vllm",
     "minimax",
     "anthropic",
+    "openai",
     "mock",
 ]
 LOG_LEVELS = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
@@ -430,6 +436,45 @@ class AnthropicAPIPipeline(LLMPipeline):
         return response
 
 
+class OpenAIPipeline(LLMPipeline):
+
+    def __init__(self, cfg: PipelineConfig):
+
+        super().__init__(cfg)
+
+        self.cfg = cfg
+        configure_openai_logging(self.cfg.log_level)
+
+    def generate(self, inputs) -> Union[str, List[str]]:
+
+        messages, parallel = super().parse_inputs(inputs)
+
+        if parallel:
+            response = openai_chat_completion_batch(
+                cfg=self.cfg,
+                requests_messages=messages,
+            )
+
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += "OpenAI-compatible query responses:\n"
+            for r in response:
+                debug_msg += f"{r}\n"
+                debug_msg += ("-" * 40) + "\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        else:
+            logging.debug("OpenAI-compatible query messages: %s", messages)
+            response = openai_chat_completion(cfg=self.cfg, messages=messages)
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += f"OpenAI-compatible query response: {response}\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        logging.debug(debug_msg)
+        return response
+
+
 class MockPipeline(LLMPipeline):
     """Mock pipeline for testing without a GPU.
 
@@ -734,6 +779,8 @@ def pipeline_from_config(cfg: PipelineConfig):
         llm_pipeline = MinimaxPipeline(cfg)
     elif cfg.pipeline_type == "anthropic":
         llm_pipeline = AnthropicAPIPipeline(cfg)
+    elif cfg.pipeline_type == "openai":
+        llm_pipeline = OpenAIPipeline(cfg)
     elif cfg.pipeline_type == "mock":
         llm_pipeline = MockPipeline(cfg)
     else:
@@ -775,6 +822,7 @@ __all__ = [
     "LOG_LEVELS",
     "MinimaxPipeline",
     "MockPipeline",
+    "OpenAIPipeline",
     "PIPELINE_TYPES",
     "PipelineConfig",
     "SGLangPipeline",
