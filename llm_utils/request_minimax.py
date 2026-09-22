@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from openai import OpenAI
+from llm_utils.request_sglang import parse_assistant_message
 
 try:
     from .llm_configs import RequestConfig
@@ -100,7 +101,7 @@ def minimax_chat_completion(
     if not isinstance(content, str) or not content.strip():
         raise ValueError(f"Unexpected assistant content in API response: {response}")
 
-    return {"role": "assistant", "content": content.strip()}
+    return parse_assistant_message(content)
 
 
 def minimax_chat_completion_batch(

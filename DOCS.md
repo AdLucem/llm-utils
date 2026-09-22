@@ -186,10 +186,6 @@ The repository test suite lives in `test/`.
   `transformers` or `torch` installs by using small fake tokenizer/model
   objects.
 
-- `test/test_minimax_pipeline.py`
-  Verifies `MinimaxPipeline` input handling and request dispatch without
-  requiring live MiniMax credentials or network access.
-
 - `test/test_sglang_pipeline.py`
   Exercises `SGLangPipeline` against a live SGLang server at `0.0.0.0:30000`
   using the `Qwen/Qwen3.5-35B-A3B-FP8` model and short deterministic prompts.
