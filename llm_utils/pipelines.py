@@ -6,14 +6,37 @@ from typing import List, Optional, Union
 
 from ._compat import Literal, dataclass
 from .llm_configs import args_to_request_config
+from .request_anthropic_api import (
+    anthropic_messages_completion,
+    anthropic_messages_completion_batch,
+    configure_logging as configure_anthropic_logging,
+)
 from .request_minimax import minimax_chat_completion, minimax_chat_completion_batch
+from .request_openai_api import (
+    configure_logging as configure_openai_logging,
+    openai_chat_completion,
+    openai_chat_completion_batch,
+)
 from .request_sglang import (
     configure_logging,
     sglang_chat_completion,
     sglang_chat_completion_batch,
 )
+from .request_vllm import (
+    init_vllm,
+    vllm_chat_completion,
+    vllm_chat_completion_batch,
+)
 
-PIPELINE_TYPES = Literal["sglang", "transformers", "minimax", "mock"]
+PIPELINE_TYPES = Literal[
+    "sglang",
+    "transformers",
+    "vllm",
+    "minimax",
+    "anthropic",
+    "openai",
+    "mock",
+]
 LOG_LEVELS = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 
 
@@ -38,6 +61,8 @@ class PipelineConfig:
     host: Optional[str] = "127.0.0.1"
     port: Optional[int] = 30000
     timeout: Optional[int] = 180  # seconds
+    base_url: Optional[str] = None
+    token: Optional[str] = None
 
     # Transformers pipeline arguments
     device: Optional[Literal["auto", "cpu", "cuda", "mps"]] = "auto"
@@ -289,6 +314,50 @@ class SGLangPipeline(LLMPipeline):
         return response
 
 
+class VLLMPipeline(LLMPipeline):
+
+    def __init__(self, cfg: PipelineConfig):
+
+        super().__init__(cfg)
+
+        self.cfg = cfg
+        configure_logging(self.cfg.log_level)
+        self.llm, self.tokenizer = init_vllm(cfg)
+
+    def generate(self, inputs) -> Union[dict, List[dict]]:
+
+        messages, parallel = super().parse_inputs(inputs)
+
+        if parallel:
+            response = vllm_chat_completion_batch(
+                cfg=self.cfg,
+                requests_messages=messages,
+                llm=self.llm,
+                tokenizer=self.tokenizer,
+            )
+
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += "vLLM query responses:\n"
+            for r in response:
+                debug_msg += f"{r}\n"
+                debug_msg += ("-" * 40) + "\n"
+            debug_msg += ("=" * 60) + "\n"
+        else:
+            logging.debug("vLLM query messages: %s", messages)
+            response = vllm_chat_completion(
+                cfg=self.cfg,
+                messages=messages,
+                llm=self.llm,
+                tokenizer=self.tokenizer,
+            )
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += f"vLLM query response: {response}\n"
+            debug_msg += ("=" * 60) + "\n"
+
+        logging.debug(debug_msg)
+        return response
+
+
 class MinimaxPipeline(LLMPipeline):
 
     def __init__(self, cfg: PipelineConfig):
@@ -321,6 +390,84 @@ class MinimaxPipeline(LLMPipeline):
             response = minimax_chat_completion(cfg=self.cfg, messages=messages)
             debug_msg = "\n" + ("=" * 60) + "\n"
             debug_msg += f"MiniMax Query response: {response}\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        logging.debug(debug_msg)
+        return response
+
+
+class AnthropicAPIPipeline(LLMPipeline):
+
+    def __init__(self, cfg: PipelineConfig):
+
+        super().__init__(cfg)
+
+        self.cfg = cfg
+        configure_anthropic_logging(self.cfg.log_level)
+
+    def generate(self, inputs) -> Union[str, List[str]]:
+
+        messages, parallel = super().parse_inputs(inputs)
+
+        if parallel:
+            response = anthropic_messages_completion_batch(
+                cfg=self.cfg,
+                requests_messages=messages,
+            )
+
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += "Anthropic Query responses:\n"
+            for r in response:
+                debug_msg += f"{r}\n"
+                debug_msg += ("-" * 40) + "\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        else:
+            logging.debug("Anthropic Query messages: %s", messages)
+            response = anthropic_messages_completion(cfg=self.cfg, messages=messages)
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += f"Anthropic Query response: {response}\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        logging.debug(debug_msg)
+        return response
+
+
+class OpenAIPipeline(LLMPipeline):
+
+    def __init__(self, cfg: PipelineConfig):
+
+        super().__init__(cfg)
+
+        self.cfg = cfg
+        configure_openai_logging(self.cfg.log_level)
+
+    def generate(self, inputs) -> Union[str, List[str]]:
+
+        messages, parallel = super().parse_inputs(inputs)
+
+        if parallel:
+            response = openai_chat_completion_batch(
+                cfg=self.cfg,
+                requests_messages=messages,
+            )
+
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += "OpenAI-compatible query responses:\n"
+            for r in response:
+                debug_msg += f"{r}\n"
+                debug_msg += ("-" * 40) + "\n"
+            debug_msg += ("=" * 60) + "\n"
+            logging.debug(debug_msg)
+
+        else:
+            logging.debug("OpenAI-compatible query messages: %s", messages)
+            response = openai_chat_completion(cfg=self.cfg, messages=messages)
+            debug_msg = "\n" + ("=" * 60) + "\n"
+            debug_msg += f"OpenAI-compatible query response: {response}\n"
             debug_msg += ("=" * 60) + "\n"
             logging.debug(debug_msg)
 
@@ -626,8 +773,14 @@ def pipeline_from_config(cfg: PipelineConfig):
         llm_pipeline = SGLangPipeline(cfg)
     elif cfg.pipeline_type == "transformers":
         llm_pipeline = TransformersPipeline(cfg)
+    elif cfg.pipeline_type == "vllm":
+        llm_pipeline = VLLMPipeline(cfg)
     elif cfg.pipeline_type == "minimax":
         llm_pipeline = MinimaxPipeline(cfg)
+    elif cfg.pipeline_type == "anthropic":
+        llm_pipeline = AnthropicAPIPipeline(cfg)
+    elif cfg.pipeline_type == "openai":
+        llm_pipeline = OpenAIPipeline(cfg)
     elif cfg.pipeline_type == "mock":
         llm_pipeline = MockPipeline(cfg)
     else:
@@ -654,6 +807,8 @@ def pipeline_config_from_args(args):
         host=args.host,
         port=args.port,
         timeout=args.timeout,
+        base_url=getattr(args, "base_url", None),
+        token=getattr(args, "token", None),
         device=args.device,
         dtype=args.dtype,
     )
@@ -663,13 +818,16 @@ def pipeline_config_from_args(args):
 
 __all__ = [
     "LLMPipeline",
+    "AnthropicAPIPipeline",
     "LOG_LEVELS",
     "MinimaxPipeline",
     "MockPipeline",
+    "OpenAIPipeline",
     "PIPELINE_TYPES",
     "PipelineConfig",
     "SGLangPipeline",
     "TransformersPipeline",
+    "VLLMPipeline",
     "args_to_request_config",
     "pipeline_config_from_args",
     "pipeline_from_config",

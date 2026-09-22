@@ -16,12 +16,15 @@ else:
 def build_parser():
     """Create the command-line parser for the pipeline CLI."""
     parser = argparse.ArgumentParser(
-        description="Send a system/user prompt file through an SGLang or MiniMax pipeline.",
+        description=(
+            "Send a system/user prompt file through an SGLang, vLLM, MiniMax, "
+            "Anthropic-compatible, or OpenAI-compatible pipeline."
+        ),
     )
     parser.add_argument(
         "--pipeline-type",
         default="sglang",
-        choices=["sglang", "minimax"],
+        choices=["sglang", "vllm", "minimax", "anthropic", "openai"],
         help="Pipeline backend to use (default: sglang).",
     )
     parser.add_argument(
@@ -38,13 +41,13 @@ def build_parser():
     parser.add_argument(
         "--host",
         default="127.0.0.1",
-        help="SGLang server host (default: 127.0.0.1). Ignored for MiniMax.",
+        help="SGLang server host (default: 127.0.0.1). Ignored for vLLM and MiniMax.",
     )
     parser.add_argument(
         "--port",
         type=int,
         default=30000,
-        help="SGLang server port (default: 30000). Ignored for MiniMax.",
+        help="SGLang server port (default: 30000). Ignored for vLLM and MiniMax.",
     )
     parser.add_argument(
         "--temperature",
@@ -75,6 +78,17 @@ def build_parser():
         type=int,
         default=180,
         help="Request timeout in seconds (default: 180).",
+    )
+    parser.add_argument(
+        "--base-url",
+        help=(
+            "API base URL for compatible endpoints. For OpenRouter with the "
+            "openai pipeline, use https://openrouter.ai/api/v1."
+        ),
+    )
+    parser.add_argument(
+        "--token",
+        help="Authentication token or API key for API-backed compatible endpoints.",
     )
     parser.add_argument(
         "--log-level",
@@ -131,6 +145,19 @@ def validate_args(args):
     """Validate CLI arguments before building the pipeline."""
     if args.pipeline_type == "sglang" and (args.port <= 0 or args.port > 65535):
         raise ValueError("--port must be between 1 and 65535.")
+    if args.pipeline_type == "anthropic":
+        if not args.base_url:
+            raise ValueError("--base-url is required for the anthropic pipeline.")
+        if not args.token:
+            raise ValueError("--token is required for the anthropic pipeline.")
+    if args.pipeline_type == "openai":
+        import os
+
+        if not (args.token or os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENROUTER_API_KEY")):
+            raise ValueError(
+                "--token, OPENAI_API_KEY, or OPENROUTER_API_KEY is required "
+                "for the openai pipeline."
+            )
     if args.max_new_tokens <= 0:
         raise ValueError("--max-new-tokens must be > 0.")
     if args.timeout <= 0:
@@ -159,6 +186,8 @@ def main():
         host=args.host,
         port=args.port,
         timeout=args.timeout,
+        base_url=args.base_url,
+        token=args.token,
     )
 
     pipeline = pipeline_from_config(cfg)
